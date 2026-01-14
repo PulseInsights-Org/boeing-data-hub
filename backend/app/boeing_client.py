@@ -23,7 +23,6 @@ All credentials are read from environment variables and MUST NOT be
 hard-coded in source.
 """
 
-
 BOEING_OAUTH_TOKEN_URL = os.getenv(
     "BOEING_OAUTH_TOKEN_URL",
     "https://api.developer.boeingservices.com/oauth2/v2.0/token",

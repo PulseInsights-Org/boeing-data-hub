@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import Any, Dict, List
 
 import httpx
@@ -14,6 +15,7 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set for Supabase access")
 
 SUPABASE_REST_URL = SUPABASE_URL.rstrip("/") + "/rest/v1"
+logger = logging.getLogger("supabase_client")
 
 
 async def _supabase_post(table: str, rows: List[Dict[str, Any]], prefer: str = "return=minimal") -> None:
@@ -32,6 +34,7 @@ async def _supabase_post(table: str, rows: List[Dict[str, Any]], prefer: str = "
         resp = await client.post(f"{SUPABASE_REST_URL}/{table}", headers=headers, json=rows)
 
     if resp.status_code >= 300:
+        logger.info("supabase error table=%s status=%s body=%s", table, resp.status_code, resp.text)
         raise HTTPException(
             status_code=500,
             detail=f"Supabase insert into {table} failed: {resp.status_code} {resp.text}",
@@ -190,10 +193,10 @@ async def upsert_product(record: Dict[str, Any], shopify_product_id: str | None 
     )
 
 
-async def update_quote_form_data(rfq_no: str, form_data: Dict[str, Any]) -> None:
-    """Upsert form_data into quotes by rfq_no."""
+async def upsert_quote_form_data(record: Dict[str, Any]) -> None:
+    """Upsert a quotes row by rfq_no."""
     await _supabase_post(
         "quotes",
-        [{"rfq_no": rfq_no, "form_data": form_data}],
+        [record],
         prefer="resolution=merge-duplicates",
     )

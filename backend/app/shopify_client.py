@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import Any, Dict, Optional
 
 import httpx
@@ -12,6 +13,7 @@ from .supabase_client import upsert_product
 SHOPIFY_STORE_DOMAIN = os.getenv("SHOPIFY_STORE_DOMAIN")
 SHOPIFY_ADMIN_API_TOKEN = os.getenv("SHOPIFY_ADMIN_API_TOKEN")
 SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-01")
+logger = logging.getLogger("shopify_client")
 
 
 def _base_url() -> str:
@@ -23,6 +25,7 @@ def _base_url() -> str:
 async def _call_shopify(method: str, path: str, json: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     base = _base_url()
     url = f"{base}{path}"
+    logger.info("shopify request method=%s path=%s params=%s", method, path, params)
 
     headers = {
         "X-Shopify-Access-Token": SHOPIFY_ADMIN_API_TOKEN or "",
@@ -33,6 +36,7 @@ async def _call_shopify(method: str, path: str, json: Optional[Dict[str, Any]] =
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.request(method=method, url=url, headers=headers, json=json, params=params)
 
+    logger.info("shopify response status=%s path=%s", resp.status_code, path)
     if resp.status_code >= 400:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 

@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,6 +8,7 @@ from .shopify_client import publish_product, update_product, find_product_by_sku
 from .zap_webhook import router as zap_router
 
 app = FastAPI(title="Boeing Data Hub Backend")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 
 # Allow frontend dev server (Vite) to call this API
 app.add_middleware(
