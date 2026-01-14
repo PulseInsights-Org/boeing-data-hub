@@ -21,6 +21,7 @@ export interface EnrichedProduct extends BoeingProduct {
   price: number | null;
   inventory: number | null;
   availability: string | null;
+  currency?: string | null;
 }
 
 export interface NormalizedProduct extends EnrichedProduct {

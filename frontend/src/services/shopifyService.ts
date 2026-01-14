@@ -10,9 +10,8 @@
 
 import { NormalizedProduct, ShopifyPublishResponse } from '@/types/product';
 
-// Placeholder Shopify configuration
-const SHOPIFY_STORE_URL = 'https://your-store.myshopify.com';
-const SHOPIFY_API_VERSION = '2024-01';
+// Backend API base URL (FastAPI) for Shopify operations
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 /**
  * Transform normalized product to Shopify product format
@@ -68,38 +67,29 @@ const transformToShopifyFormat = (product: NormalizedProduct) => {
  */
 export const publishToShopify = async (product: NormalizedProduct): Promise<ShopifyPublishResponse> => {
   console.log(`[ShopifyService] Publishing product to Shopify: ${product.partNumber}`);
-  
-  const shopifyPayload = transformToShopifyFormat(product);
-  console.log('[ShopifyService] Transformed payload:', shopifyPayload);
-  
-  // In production: Make authenticated API call to Shopify
-  // POST ${SHOPIFY_STORE_URL}/admin/api/${SHOPIFY_API_VERSION}/products.json
-  // Headers: 
-  //   X-Shopify-Access-Token: {accessToken}
-  //   Content-Type: application/json
-  // Body: shopifyPayload
-  
-  // Simulating API delay
-  await new Promise(resolve => setTimeout(resolve, 1500));
-  
-  // Simulate success (90% success rate for demo)
-  const isSuccess = Math.random() > 0.1;
-  
-  if (isSuccess) {
-    const mockShopifyProductId = `gid://shopify/Product/${Date.now()}`;
-    console.log(`[ShopifyService] Successfully published. Shopify ID: ${mockShopifyProductId}`);
-    
-    return {
-      success: true,
-      shopifyProductId: mockShopifyProductId,
-    };
-  } else {
-    console.error('[ShopifyService] Failed to publish product');
+
+  const url = new URL('/api/shopify/publish', API_BASE_URL || window.location.origin);
+
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(product),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    console.error('[ShopifyService] Backend publish failed', response.status, text);
     return {
       success: false,
-      error: 'Failed to create product in Shopify. Please check product data and try again.',
+      error: `Backend publish failed: ${response.status} ${text}`,
     };
   }
+
+  const data = (await response.json()) as ShopifyPublishResponse;
+  return data;
 };
 
 /**
@@ -110,15 +100,29 @@ export const updateShopifyProduct = async (
   product: NormalizedProduct
 ): Promise<ShopifyPublishResponse> => {
   console.log(`[ShopifyService] Updating Shopify product: ${shopifyProductId}`);
-  
-  // In production: PUT ${SHOPIFY_STORE_URL}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json
-  
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  return {
-    success: true,
-    shopifyProductId,
-  };
+
+  const url = new URL(`/api/shopify/products/${encodeURIComponent(shopifyProductId)}`, API_BASE_URL || window.location.origin);
+
+  const response = await fetch(url.toString(), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(product),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    console.error('[ShopifyService] Backend update failed', response.status, text);
+    return {
+      success: false,
+      error: `Backend update failed: ${response.status} ${text}`,
+    };
+  }
+
+  const data = (await response.json()) as ShopifyPublishResponse;
+  return data;
 };
 
 /**
@@ -126,12 +130,23 @@ export const updateShopifyProduct = async (
  */
 export const checkProductExists = async (sku: string): Promise<string | null> => {
   console.log(`[ShopifyService] Checking if SKU exists: ${sku}`);
-  
-  // In production: Query Shopify for existing product
-  // GET ${SHOPIFY_STORE_URL}/admin/api/${SHOPIFY_API_VERSION}/products.json?fields=id,variants&limit=1
-  // Filter by variant SKU
-  
-  await new Promise(resolve => setTimeout(resolve, 200));
-  
-  return null; // Product doesn't exist
+
+  const url = new URL('/api/shopify/check', API_BASE_URL || window.location.origin);
+  url.searchParams.set('sku', sku);
+
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    console.error('[ShopifyService] Backend check failed', response.status, text);
+    return null;
+  }
+
+  const data = (await response.json()) as { shopifyProductId: string | null };
+  return data.shopifyProductId ?? null;
 };

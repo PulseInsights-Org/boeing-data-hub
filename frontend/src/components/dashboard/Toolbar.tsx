@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, DollarSign, Loader2 } from 'lucide-react';
+import { Search, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NormalizedProduct } from '@/types/product';
@@ -7,17 +7,13 @@ import { NormalizedProduct } from '@/types/product';
 interface ToolbarProps {
   selectedProduct: NormalizedProduct | null;
   isLoading: boolean;
-  actionLoading: { [key: string]: boolean };
   onFetchProducts: (query: string) => Promise<void>;
-  onEnrichProduct: (productId: string) => Promise<void>;
 }
 
 export function Toolbar({
   selectedProduct,
   isLoading,
-  actionLoading,
   onFetchProducts,
-  onEnrichProduct,
 }: ToolbarProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -32,9 +28,6 @@ export function Toolbar({
       handleSearch();
     }
   };
-
-  const isEnriching = selectedProduct && actionLoading[`enrich-${selectedProduct.id}`];
-  const canEnrich = selectedProduct && selectedProduct.status === 'fetched';
 
   return (
     <div className="border-b border-border bg-card px-6 py-4">
@@ -74,31 +67,12 @@ export function Toolbar({
         {/* Divider */}
         <div className="h-8 w-px bg-border" />
 
-        {/* Enrichment Section */}
-        <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            onClick={() => selectedProduct && onEnrichProduct(selectedProduct.id)}
-            disabled={!canEnrich || !!isEnriching}
-          >
-            {isEnriching ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Getting Price...
-              </>
-            ) : (
-              <>
-                <DollarSign className="mr-2 h-4 w-4" />
-                Get Price
-              </>
-            )}
-          </Button>
-          {selectedProduct && (
-            <span className="text-sm text-muted-foreground">
-              Selected: <span className="font-medium text-foreground">{selectedProduct.partNumber}</span>
-            </span>
-          )}
-        </div>
+        {/* Selected Product */}
+        {selectedProduct && (
+          <span className="text-sm text-muted-foreground">
+            Selected: <span className="font-medium text-foreground">{selectedProduct.partNumber}</span>
+          </span>
+        )}
       </div>
     </div>
   );

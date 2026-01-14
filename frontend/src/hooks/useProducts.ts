@@ -1,8 +1,7 @@
 import { useState, useCallback, useReducer } from 'react';
 import { NormalizedProduct, ProductStatus } from '@/types/product';
 import { searchProducts } from '@/services/boeingService';
-import { getPricingAndInventory } from '@/services/pricingService';
-import { storeRawBoeingData, saveNormalizedProduct } from '@/services/supabaseService';
+import { saveNormalizedProduct } from '@/services/supabaseService';
 import { publishToShopify } from '@/services/shopifyService';
 
 // Action types for reducer
@@ -42,7 +41,6 @@ interface UseProductsReturn {
   actionLoading: { [key: string]: boolean };
   selectProduct: (product: NormalizedProduct | null) => void;
   fetchProducts: (query: string) => Promise<void>;
-  enrichProduct: (productId: string) => Promise<void>;
   updateProduct: (product: NormalizedProduct) => Promise<void>;
   publishProduct: (productId: string) => Promise<{ success: boolean; error?: string }>;
   clearError: () => void;
@@ -73,23 +71,22 @@ export function useProducts(): UseProductsReturn {
     setError(null);
 
     try {
-      // Fetch from Boeing API
+      // Fetch from backend Boeing API (already normalized, with price/inventory
+      // and persisted to Supabase on the server side).
       const boeingProducts = await searchProducts({ query });
-      
-      // Store raw data in Supabase
-      await storeRawBoeingData(boeingProducts);
-      
-      // Transform to normalized products
+
+      const now = new Date().toISOString();
       const normalizedProducts: NormalizedProduct[] = boeingProducts.map(p => ({
         ...p,
+        price: (p as any).price ?? null,
+        inventory: (p as any).inventory ?? null,
+        availability: (p as any).availability ?? null,
+        currency: (p as any).currency ?? null,
         status: 'fetched' as ProductStatus,
         title: p.name,
-        price: null,
-        inventory: null,
-        availability: null,
-        lastModified: new Date().toISOString(),
+        lastModified: now,
       }));
-      
+
       dispatch({ type: 'ADD_PRODUCTS', payload: normalizedProducts });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch products');
@@ -97,38 +94,6 @@ export function useProducts(): UseProductsReturn {
       setIsLoading(false);
     }
   }, []);
-
-  const enrichProduct = useCallback(async (productId: string) => {
-    const product = products.find(p => p.id === productId);
-    if (!product) return;
-
-    setActionState(`enrich-${productId}`, true);
-    setError(null);
-
-    try {
-      const pricing = await getPricingAndInventory(product.partNumber);
-      
-      const enrichedProduct: NormalizedProduct = {
-        ...product,
-        price: pricing.price,
-        inventory: pricing.inventory,
-        availability: pricing.availability,
-        status: 'enriched',
-        lastModified: new Date().toISOString(),
-      };
-      
-      dispatch({ type: 'UPDATE_PRODUCT', payload: enrichedProduct });
-      
-      // Update selected product if it's the one being enriched
-      if (selectedProduct?.id === productId) {
-        setSelectedProduct(enrichedProduct);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get pricing');
-    } finally {
-      setActionState(`enrich-${productId}`, false);
-    }
-  }, [products, selectedProduct, setActionState]);
 
   const updateProduct = useCallback(async (product: NormalizedProduct) => {
     setActionState(`save-${product.id}`, true);
@@ -190,7 +155,6 @@ export function useProducts(): UseProductsReturn {
     actionLoading,
     selectProduct,
     fetchProducts,
-    enrichProduct,
     updateProduct,
     publishProduct,
     clearError,

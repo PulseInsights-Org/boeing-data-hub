@@ -16,7 +16,6 @@ const Index = () => {
     actionLoading,
     selectProduct,
     fetchProducts,
-    enrichProduct,
     updateProduct,
     publishProduct,
     clearError,
@@ -45,9 +44,7 @@ const Index = () => {
         <Toolbar
           selectedProduct={selectedProduct}
           isLoading={isLoading}
-          actionLoading={actionLoading}
           onFetchProducts={fetchProducts}
-          onEnrichProduct={enrichProduct}
         />
 
         <main className="flex-1 px-6 py-6">
