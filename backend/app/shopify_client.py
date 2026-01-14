@@ -151,3 +151,30 @@ async def find_product_by_sku(sku: str) -> Optional[str]:
             if v.get("sku") == sku:
                 return str(p.get("id"))
     return None
+
+
+async def get_variant_by_sku(sku: str) -> Optional[Dict[str, Any]]:
+    """Fetch a Shopify variant by SKU using the Admin GraphQL API."""
+    query = (
+        "query GetSkuData($skuQuery: String!) { "
+        "productVariants(first: 5, query: $skuQuery) { "
+        "edges { node { id sku title price compareAtPrice inventoryQuantity } } } }"
+    )
+    body = {
+        "query": query,
+        "variables": {"skuQuery": sku},
+    }
+    data = await _call_shopify("POST", "/graphql.json", json=body)
+    if not data:
+        return None
+    if data.get("errors"):
+        raise HTTPException(status_code=502, detail=str(data.get("errors")))
+
+    edges = (data.get("data") or {}).get("productVariants", {}).get("edges", [])
+    if not edges:
+        return None
+    for edge in edges:
+        node = edge.get("node") or {}
+        if node.get("sku") == sku:
+            return node
+    return (edges[0].get("node") or {}) if edges else None

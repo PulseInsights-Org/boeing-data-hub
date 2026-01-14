@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .boeing_client import search_products
 from .shopify_client import publish_product, update_product, find_product_by_sku
+from .zap_webhook import router as zap_router
 
 app = FastAPI(title="Boeing Data Hub Backend")
 
@@ -14,6 +15,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(zap_router)
 
 
 @app.get("/api/boeing/product-search")
