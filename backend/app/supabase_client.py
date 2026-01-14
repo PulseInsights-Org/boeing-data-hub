@@ -188,3 +188,12 @@ async def upsert_product(record: Dict[str, Any], shopify_product_id: str | None 
         [db_row],
         prefer="resolution=merge-duplicates",
     )
+
+
+async def update_quote_form_data(rfq_no: str, form_data: Dict[str, Any]) -> None:
+    """Upsert form_data into quotes by rfq_no."""
+    await _supabase_post(
+        "quotes",
+        [{"rfq_no": rfq_no, "form_data": form_data}],
+        prefer="resolution=merge-duplicates",
+    )
