@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { RealtimeChannel } from '@supabase/supabase-js';
 import {
   BatchStatusResponse,
   BulkOperationResponse,
@@ -6,14 +7,14 @@ import {
 import {
   startBulkSearch,
   startBulkPublish,
-  getBatchStatus,
   listBatches,
   cancelBatch,
   parsePartNumbers,
 } from '@/services/bulkService';
-
-// Polling interval in milliseconds
-const POLLING_INTERVAL = 2000;
+import {
+  subscribeToBatches,
+  unsubscribe,
+} from '@/services/realtimeService';
 
 interface UseBulkOperationsReturn {
   // State
@@ -37,57 +38,74 @@ export function useBulkOperations(): UseBulkOperationsReturn {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
-  // Track batches being polled
-  const pollingRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  // Realtime subscription reference
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const statusFilterRef = useRef<string | null>(null);
 
-  // Poll a specific batch for status updates
-  const pollBatch = useCallback(async (batchId: string) => {
-    try {
-      const status = await getBatchStatus(batchId);
-
-      setActiveBatches(prev => {
-        const index = prev.findIndex(b => b.id === batchId);
-        if (index >= 0) {
-          const updated = [...prev];
-          updated[index] = status;
-          return updated;
-        }
-        return [...prev, status];
-      });
-
-      // Stop polling if batch is completed, failed, or cancelled
-      if (['completed', 'failed', 'cancelled'].includes(status.status)) {
-        const intervalId = pollingRef.current.get(batchId);
-        if (intervalId) {
-          clearInterval(intervalId);
-          pollingRef.current.delete(batchId);
-        }
-      }
-    } catch (err) {
-      console.error(`Failed to poll batch ${batchId}:`, err);
-    }
-  }, []);
-
-  // Start polling for a batch
-  const startPolling = useCallback((batchId: string) => {
-    // Don't start if already polling
-    if (pollingRef.current.has(batchId)) return;
-
-    // Initial poll
-    pollBatch(batchId);
-
-    // Set up interval polling
-    const intervalId = setInterval(() => pollBatch(batchId), POLLING_INTERVAL);
-    pollingRef.current.set(batchId, intervalId);
-  }, [pollBatch]);
-
-  // Stop all polling on unmount
+  // Keep status filter ref in sync
   useEffect(() => {
-    return () => {
-      pollingRef.current.forEach(intervalId => clearInterval(intervalId));
-      pollingRef.current.clear();
-    };
+    statusFilterRef.current = statusFilter;
+  }, [statusFilter]);
+
+  // Handle batch insert from realtime
+  const handleBatchInsert = useCallback((batch: BatchStatusResponse) => {
+    // Only add if it matches current filter (or no filter)
+    const currentFilter = statusFilterRef.current;
+    if (currentFilter === 'active' && !['pending', 'processing'].includes(batch.status)) return;
+    if (currentFilter && currentFilter !== 'active' && batch.status !== currentFilter) return;
+
+    setActiveBatches(prev => {
+      // Check if batch already exists
+      const exists = prev.some(b => b.id === batch.id);
+      if (exists) return prev;
+      // Add to beginning of list
+      return [batch, ...prev];
+    });
   }, []);
+
+  // Handle batch update from realtime
+  const handleBatchUpdate = useCallback((batch: BatchStatusResponse) => {
+    setActiveBatches(prev => {
+      const index = prev.findIndex(b => b.id === batch.id);
+      if (index >= 0) {
+        // Update existing batch
+        const updated = [...prev];
+        updated[index] = batch;
+        return updated;
+      }
+      // If not found and matches filter, add it
+      const currentFilter = statusFilterRef.current;
+      if (currentFilter === 'active' && !['pending', 'processing'].includes(batch.status)) return prev;
+      if (currentFilter && currentFilter !== 'active' && batch.status !== currentFilter) return prev;
+      return [batch, ...prev];
+    });
+  }, []);
+
+  // Handle batch delete from realtime
+  const handleBatchDelete = useCallback((oldBatch: { id: string }) => {
+    setActiveBatches(prev => prev.filter(b => b.id !== oldBatch.id));
+  }, []);
+
+  // Set up Supabase Realtime subscription
+  useEffect(() => {
+    console.log('[useBulkOperations] Setting up Supabase Realtime subscription');
+
+    // Subscribe to batches table changes
+    channelRef.current = subscribeToBatches(
+      handleBatchInsert,
+      handleBatchUpdate,
+      handleBatchDelete
+    );
+
+    // Cleanup on unmount
+    return () => {
+      if (channelRef.current) {
+        console.log('[useBulkOperations] Cleaning up Realtime subscription');
+        unsubscribe(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+  }, [handleBatchInsert, handleBatchUpdate, handleBatchDelete]);
 
   // Start a bulk search operation
   const startBulkSearchOperation = useCallback(async (
@@ -109,9 +127,7 @@ export function useBulkOperations(): UseBulkOperationsReturn {
         idempotency_key: idempotencyKey,
       });
 
-      // Start polling for this batch
-      startPolling(response.batch_id);
-
+      // Realtime will automatically update the batches list
       return response;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to start bulk search';
@@ -120,7 +136,7 @@ export function useBulkOperations(): UseBulkOperationsReturn {
     } finally {
       setIsStarting(false);
     }
-  }, [startPolling]);
+  }, []);
 
   // Start a bulk publish operation
   const startBulkPublishOperation = useCallback(async (
@@ -142,9 +158,7 @@ export function useBulkOperations(): UseBulkOperationsReturn {
         idempotency_key: idempotencyKey,
       });
 
-      // Start polling for this batch
-      startPolling(response.batch_id);
-
+      // Realtime will automatically update the batches list
       return response;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to start bulk publish';
@@ -153,27 +167,13 @@ export function useBulkOperations(): UseBulkOperationsReturn {
     } finally {
       setIsStarting(false);
     }
-  }, [startPolling]);
+  }, []);
 
   // Cancel a batch operation
   const cancelBatchOperation = useCallback(async (batchId: string): Promise<boolean> => {
     try {
       await cancelBatch(batchId);
-
-      // Update local state
-      setActiveBatches(prev =>
-        prev.map(b =>
-          b.id === batchId ? { ...b, status: 'cancelled' as const } : b
-        )
-      );
-
-      // Stop polling
-      const intervalId = pollingRef.current.get(batchId);
-      if (intervalId) {
-        clearInterval(intervalId);
-        pollingRef.current.delete(batchId);
-      }
-
+      // Realtime will update the batch status automatically
       return true;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to cancel batch';
@@ -188,22 +188,15 @@ export function useBulkOperations(): UseBulkOperationsReturn {
       const filterStatus = status !== undefined ? status : statusFilter;
       const response = await listBatches(20, 0, filterStatus || undefined);
       setActiveBatches(response.batches);
-
-      // Start polling for any active batches
-      response.batches.forEach(batch => {
-        if (['pending', 'processing'].includes(batch.status)) {
-          startPolling(batch.id);
-        }
-      });
     } catch (err) {
       console.error('Failed to refresh batches:', err);
     }
-  }, [startPolling, statusFilter]);
+  }, [statusFilter]);
 
   // Load initial batches on mount
   useEffect(() => {
     refreshBatches();
-  }, [refreshBatches]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearError = useCallback(() => {
     setError(null);
@@ -212,8 +205,21 @@ export function useBulkOperations(): UseBulkOperationsReturn {
   // Update status filter and refresh
   const handleSetStatusFilter = useCallback((status: string | null) => {
     setStatusFilter(status);
-    refreshBatches(status || undefined);
-  }, [refreshBatches]);
+    // Refresh with new filter
+    const filterStatus = status === 'active' ? undefined : status;
+    listBatches(20, 0, filterStatus || undefined).then(response => {
+      // For 'active' filter, filter client-side
+      if (status === 'active') {
+        setActiveBatches(response.batches.filter(b =>
+          ['pending', 'processing'].includes(b.status)
+        ));
+      } else {
+        setActiveBatches(response.batches);
+      }
+    }).catch(err => {
+      console.error('Failed to refresh batches:', err);
+    });
+  }, []);
 
   return {
     activeBatches,

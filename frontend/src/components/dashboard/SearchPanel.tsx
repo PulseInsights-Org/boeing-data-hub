@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { RealtimeChannel } from '@supabase/supabase-js';
 import {
   Loader2,
   Upload,
@@ -18,9 +19,10 @@ import {
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
-import { BatchStatusResponse, BatchStatus, NormalizedProduct } from '@/types/product';
+import { BatchStatusResponse, BatchStatus, NormalizedProduct, ProductStatus } from '@/types/product';
 import { ProductTable } from './ProductTable';
 import { cn } from '@/lib/utils';
+import { subscribeToAllStagingUpdates, unsubscribe } from '@/services/realtimeService';
 
 type StatusFilter = 'all' | 'active' | 'completed' | 'failed' | 'cancelled';
 
@@ -74,6 +76,66 @@ export function SearchPanel({
   const [publishingBatches, setPublishingBatches] = useState<Set<string>>(new Set());
   const [selectedProducts, setSelectedProducts] = useState<Record<string, NormalizedProduct | null>>({});
 
+  // Realtime subscription reference for product_staging updates
+  const stagingChannelRef = useRef<RealtimeChannel | null>(null);
+
+  // Handle realtime product_staging updates
+  const handleStagingProductUpdate = useCallback((updatedProduct: any) => {
+    // Update the product in all batch products where it exists
+    setBatchProducts(prev => {
+      const newBatchProducts = { ...prev };
+      let updated = false;
+
+      Object.keys(newBatchProducts).forEach(batchId => {
+        const products = newBatchProducts[batchId];
+        const productIndex = products.findIndex(
+          p => p.sku === updatedProduct.sku || p.id === updatedProduct.id
+        );
+
+        if (productIndex >= 0) {
+          // Update the product with new status
+          const updatedProducts = [...products];
+          updatedProducts[productIndex] = {
+            ...updatedProducts[productIndex],
+            status: (updatedProduct.status as ProductStatus) || updatedProducts[productIndex].status,
+          };
+          newBatchProducts[batchId] = updatedProducts;
+          updated = true;
+        }
+      });
+
+      return updated ? newBatchProducts : prev;
+    });
+  }, []);
+
+  // Set up Supabase Realtime subscription for product_staging updates
+  useEffect(() => {
+    const hasLoadedProducts = Object.keys(batchProducts).length > 0;
+
+    if (!hasLoadedProducts) {
+      // Clean up subscription if no products loaded
+      if (stagingChannelRef.current) {
+        unsubscribe(stagingChannelRef.current);
+        stagingChannelRef.current = null;
+      }
+      return;
+    }
+
+    // Only subscribe if we have products and not already subscribed
+    if (!stagingChannelRef.current) {
+      console.log('[SearchPanel] Setting up Realtime subscription for product_staging');
+      stagingChannelRef.current = subscribeToAllStagingUpdates(handleStagingProductUpdate);
+    }
+
+    return () => {
+      if (stagingChannelRef.current) {
+        console.log('[SearchPanel] Cleaning up Realtime subscription');
+        unsubscribe(stagingChannelRef.current);
+        stagingChannelRef.current = null;
+      }
+    };
+  }, [batchProducts, handleStagingProductUpdate]);
+
   const partNumberCount = partNumbersText
     .split(/[,;\n\r]+/)
     .filter(pn => pn.trim().length > 0).length;
@@ -122,6 +184,17 @@ export function SearchPanel({
     setPublishingBatches(prev => new Set(prev).add(batchId));
     try {
       await onBulkPublishBatch(batchId, products);
+
+      // After publishing starts, wait a moment then refresh products to show updated status
+      // The actual status updates will come via the useEffect when publish batch completes
+      setTimeout(async () => {
+        try {
+          const updatedProducts = await onLoadBatchProducts(batchId);
+          setBatchProducts(prev => ({ ...prev, [batchId]: updatedProducts }));
+        } catch (err) {
+          console.error('Failed to refresh products after publish:', err);
+        }
+      }, 3000); // Wait 3 seconds for publish to process
     } finally {
       setPublishingBatches(prev => {
         const next = new Set(prev);

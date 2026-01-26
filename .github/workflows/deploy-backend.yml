@@ -1,0 +1,86 @@
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  EC2_HOST: 54.234.36.109
+  EC2_USER: ubuntu
+  DEPLOY_PATH: /home/ubuntu/boeing-data-hub/backend
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        run: |
+          # Sync backend code to EC2 (excluding unnecessary files)
+          rsync -avz --delete \
+            --exclude '__pycache__' \
+            --exclude '*.pyc' \
+            --exclude '.env' \
+            --exclude 'venv' \
+            --exclude '.git' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            ./backend/ \
+            ${{ env.EC2_USER }}@${{ env.EC2_HOST }}:${{ env.DEPLOY_PATH }}/
+
+      - name: Install dependencies and restart services
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
+            cd /home/ubuntu/boeing-data-hub/backend
+
+            # Activate virtual environment and install dependencies
+            source venv/bin/activate
+            pip install -r requirements.txt --quiet
+
+            # Restart services
+            sudo systemctl restart boeing-backend
+            sudo systemctl restart boeing-celery
+
+            # Wait and check status
+            sleep 3
+
+            # Verify services are running
+            if systemctl is-active --quiet boeing-backend; then
+              echo "Backend service is running"
+            else
+              echo "Backend service failed to start"
+              sudo journalctl -u boeing-backend -n 20 --no-pager
+              exit 1
+            fi
+
+            if systemctl is-active --quiet boeing-celery; then
+              echo "Celery service is running"
+            else
+              echo "Celery service failed to start"
+              sudo journalctl -u boeing-celery -n 20 --no-pager
+              exit 1
+            fi
+
+            # Health check
+            curl -f http://localhost:8000/health || exit 1
+            echo "Deployment successful!"
+          EOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

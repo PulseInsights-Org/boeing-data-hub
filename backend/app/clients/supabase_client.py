@@ -2,7 +2,6 @@ import logging
 from typing import Any
 
 from supabase import create_client, Client
-from supabase.lib.client_options import ClientOptions
 
 from app.core.config import Settings
 
@@ -27,14 +26,10 @@ class SupabaseClient:
     def get_client(self) -> Client:
         """Get or create the Supabase client instance."""
         if SupabaseClient._instance is None:
-            options = ClientOptions(
-                postgrest_client_timeout=20,
-                storage_client_timeout=60,
-            )
+            # Simple client creation - let supabase SDK use defaults
             SupabaseClient._instance = create_client(
                 self._url,
                 self._key,
-                options=options,
             )
             logger.info("supabase client initialized url=%s", self._url)
         return SupabaseClient._instance
