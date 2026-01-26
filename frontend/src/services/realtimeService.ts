@@ -4,7 +4,7 @@
  * Provides real-time subscriptions for:
  * - Batch status updates (batches table)
  * - Product staging updates (product_staging table)
- * - Published products updates (products table)
+ * - Published products updates (product table)
  */
 
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
@@ -156,7 +156,7 @@ export function subscribeToProducts(
       {
         event: 'INSERT',
         schema: 'public',
-        table: 'products',
+        table: 'product',
       },
       (payload) => {
         console.log('[Realtime] Product inserted:', payload.new);
@@ -168,7 +168,7 @@ export function subscribeToProducts(
       {
         event: 'UPDATE',
         schema: 'public',
-        table: 'products',
+        table: 'product',
       },
       (payload) => {
         console.log('[Realtime] Product updated:', payload.new);
@@ -180,7 +180,7 @@ export function subscribeToProducts(
       {
         event: 'DELETE',
         schema: 'public',
-        table: 'products',
+        table: 'product',
       },
       (payload) => {
         console.log('[Realtime] Product deleted:', payload.old);
@@ -246,7 +246,7 @@ function transformBatchRecord(record: any): BatchStatusResponse {
 }
 
 /**
- * Fetch published products from the products table
+ * Fetch published products from the product table
  */
 export async function fetchPublishedProducts(
   limit: number = 100,
@@ -254,7 +254,7 @@ export async function fetchPublishedProducts(
   searchQuery?: string
 ): Promise<{ products: any[]; total: number }> {
   let query = supabase
-    .from('products')
+    .from('product')
     .select('*', { count: 'exact' })
     .order('updated_at', { ascending: false });
 

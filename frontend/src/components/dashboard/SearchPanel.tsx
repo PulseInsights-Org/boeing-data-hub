@@ -17,7 +17,7 @@ import {
   Package,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { BatchStatusResponse, BatchStatus, NormalizedProduct, ProductStatus } from '@/types/product';
 import { ProductTable } from './ProductTable';
@@ -267,21 +267,21 @@ export function SearchPanel({
       {/* Search Input Section */}
       <div className="bg-card border-b border-border px-6 py-5">
         <div className="max-w-4xl">
-          <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center gap-3 mb-4">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
               <Search className="h-4 w-4 text-primary" />
             </div>
             <div>
               <h2 className="text-base font-semibold text-foreground">Search Parts</h2>
               <p className="text-xs text-muted-foreground">
-                Enter one or more part numbers to search and fetch from Boeing
+                Enter part numbers to search and fetch from Boeing Commerce Connect
               </p>
             </div>
           </div>
 
           {/* Error Alert */}
           {error && (
-            <div className="mb-3 bg-destructive/10 border border-destructive/20 rounded-lg p-3 flex items-start justify-between">
+            <div className="mb-4 bg-destructive/10 border border-destructive/20 rounded-lg p-3 flex items-start justify-between">
               <div className="flex items-start gap-2">
                 <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
                 <span className="text-sm text-destructive">{error}</span>
@@ -300,15 +300,16 @@ export function SearchPanel({
           {/* Search Input */}
           <div className="flex gap-3">
             <div className="flex-1 relative">
-              <Textarea
-                placeholder="Enter part number(s) — separate multiple with commas, semicolons, or new lines&#10;Example: PN-001, PN-002, PN-003"
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Enter part numbers (comma, semicolon, or space separated)"
                 value={partNumbersText}
                 onChange={e => setPartNumbersText(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="min-h-[72px] font-mono text-sm resize-none pr-16"
+                className="pl-9 pr-20 font-mono text-sm h-10"
               />
               {partNumberCount > 0 && (
-                <span className="absolute bottom-2 right-2 text-xs text-muted-foreground bg-background px-2 py-0.5 rounded border">
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full font-medium">
                   {partNumberCount} part{partNumberCount !== 1 ? 's' : ''}
                 </span>
               )}
@@ -316,8 +317,7 @@ export function SearchPanel({
             <Button
               onClick={handleSearch}
               disabled={isStarting || partNumberCount === 0}
-              className="h-auto min-w-[100px] self-stretch"
-              size="lg"
+              className="h-10 px-5"
             >
               {isStarting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -329,6 +329,11 @@ export function SearchPanel({
               )}
             </Button>
           </div>
+
+          {/* Helper text */}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Tip: You can enter multiple part numbers separated by commas, semicolons, or spaces
+          </p>
         </div>
       </div>
 
