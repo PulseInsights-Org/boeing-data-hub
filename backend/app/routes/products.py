@@ -114,3 +114,4 @@ def build_products_router(store: SupabaseStore) -> APIRouter:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return router
+
