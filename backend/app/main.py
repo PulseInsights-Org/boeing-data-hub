@@ -12,6 +12,7 @@ from app.routes.boeing import build_boeing_router
 from app.routes.shopify import build_shopify_router
 from app.routes.zap import build_zap_router
 from app.routes.bulk import router as bulk_router
+from app.routes.products import build_products_router
 from app.services.boeing_service import BoeingService
 from app.services.shopify_service import ShopifyService
 from app.services.zap_service import ZapService
@@ -40,6 +41,7 @@ app.include_router(build_boeing_router(boeing_service))
 app.include_router(build_shopify_router(shopify_service))
 app.include_router(build_zap_router(zap_service))
 app.include_router(bulk_router)
+app.include_router(build_products_router(store))
 
 
 @app.get("/health")

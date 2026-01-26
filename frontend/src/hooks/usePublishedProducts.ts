@@ -1,33 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { RealtimeChannel } from '@supabase/supabase-js';
+import { useState, useCallback, useEffect } from 'react';
 import {
   fetchPublishedProducts,
-  subscribeToProducts,
-  unsubscribe,
-} from '@/services/realtimeService';
+  PublishedProduct,
+} from '@/services/productsService';
 
-export interface PublishedProduct {
-  id: string;
-  sku: string;
-  title: string;
-  body_html: string;
-  vendor: string;
-  price: number | null;
-  cost_per_item: number | null;
-  currency: string;
-  inventory_quantity: number | null;
-  weight: number | null;
-  weight_unit: string;
-  country_of_origin: string | null;
-  dim_length: number | null;
-  dim_width: number | null;
-  dim_height: number | null;
-  dim_uom: string;
-  shopify_product_id: string | null;
-  image_url: string | null;
-  created_at: string;
-  updated_at: string;
-}
+// Re-export the type for use in components
+export type { PublishedProduct } from '@/services/productsService';
 
 interface UsePublishedProductsReturn {
   products: PublishedProduct[];
@@ -51,60 +29,7 @@ export function usePublishedProducts(): UsePublishedProductsReturn {
   const [searchQuery, setSearchQuery] = useState('');
   const [offset, setOffset] = useState(0);
 
-  // Realtime subscription reference
-  const channelRef = useRef<RealtimeChannel | null>(null);
-
-  // Handle product insert from realtime
-  const handleProductInsert = useCallback((product: any) => {
-    setProducts(prev => {
-      // Check if product already exists
-      const exists = prev.some(p => p.id === product.id);
-      if (exists) return prev;
-      // Add to beginning of list
-      return [product as PublishedProduct, ...prev];
-    });
-    setTotal(prev => prev + 1);
-  }, []);
-
-  // Handle product update from realtime
-  const handleProductUpdate = useCallback((product: any) => {
-    setProducts(prev => {
-      const index = prev.findIndex(p => p.id === product.id);
-      if (index >= 0) {
-        const updated = [...prev];
-        updated[index] = product as PublishedProduct;
-        return updated;
-      }
-      return prev;
-    });
-  }, []);
-
-  // Handle product delete from realtime
-  const handleProductDelete = useCallback((oldProduct: { id: string }) => {
-    setProducts(prev => prev.filter(p => p.id !== oldProduct.id));
-    setTotal(prev => Math.max(0, prev - 1));
-  }, []);
-
-  // Set up Supabase Realtime subscription
-  useEffect(() => {
-    console.log('[usePublishedProducts] Setting up Supabase Realtime subscription');
-
-    channelRef.current = subscribeToProducts(
-      handleProductInsert,
-      handleProductUpdate,
-      handleProductDelete
-    );
-
-    return () => {
-      if (channelRef.current) {
-        console.log('[usePublishedProducts] Cleaning up Realtime subscription');
-        unsubscribe(channelRef.current);
-        channelRef.current = null;
-      }
-    };
-  }, [handleProductInsert, handleProductUpdate, handleProductDelete]);
-
-  // Fetch products
+  // Fetch products from backend API
   const fetchProducts = useCallback(async (reset: boolean = false) => {
     setIsLoading(true);
     setError(null);

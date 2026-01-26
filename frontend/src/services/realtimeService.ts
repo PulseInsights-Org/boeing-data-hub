@@ -253,29 +253,35 @@ export async function fetchPublishedProducts(
   offset: number = 0,
   searchQuery?: string
 ): Promise<{ products: any[]; total: number }> {
-  let query = supabase
-    .from('product')
-    .select('*', { count: 'exact' })
-    .order('updated_at', { ascending: false });
+  try {
+    let query = supabase
+      .from('product')
+      .select('*', { count: 'exact' });
 
-  if (searchQuery && searchQuery.trim()) {
-    // Search by sku (part number) using ilike for case-insensitive partial match
-    query = query.ilike('sku', `%${searchQuery.trim()}%`);
+    if (searchQuery && searchQuery.trim()) {
+      // Search by sku (part number) using ilike for case-insensitive partial match
+      query = query.ilike('sku', `%${searchQuery.trim()}%`);
+    }
+
+    query = query.range(offset, offset + limit - 1);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      console.error('[Realtime] Supabase error:', error.message, error.details, error.hint);
+      throw new Error(error.message || 'Failed to fetch products');
+    }
+
+    console.log('[Realtime] Fetched products:', data?.length, 'total:', count);
+
+    return {
+      products: data || [],
+      total: count || 0,
+    };
+  } catch (err) {
+    console.error('[Realtime] Error fetching published products:', err);
+    throw err;
   }
-
-  query = query.range(offset, offset + limit - 1);
-
-  const { data, error, count } = await query;
-
-  if (error) {
-    console.error('[Realtime] Error fetching published products:', error);
-    throw error;
-  }
-
-  return {
-    products: data || [],
-    total: count || 0,
-  };
 }
 
 export { supabase };
