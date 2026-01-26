@@ -1,6 +1,6 @@
 /**
  * Shopify Publishing Service
- * 
+ *
  * This service handles publishing normalized products to Shopify.
  * In production, this would:
  * 1. Transform normalized product data to Shopify format
@@ -9,64 +9,23 @@
  */
 
 import { NormalizedProduct, ShopifyPublishResponse } from '@/types/product';
+import { getAuthHeaders } from '@/services/authService';
 
 // Backend API base URL (FastAPI) for Shopify operations
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 /**
- * Transform normalized product to Shopify product format
- */
-const transformToShopifyFormat = (product: NormalizedProduct) => {
-  return {
-    product: {
-      title: product.title,
-      body_html: `<p>${product.description}</p>`,
-      vendor: product.manufacturer,
-      product_type: 'Aerospace Component',
-      tags: ['boeing', 'aerospace', product.distrSrc.toLowerCase().replace(/\s+/g, '-')],
-      variants: [
-        {
-          sku: product.partNumber,
-          price: product.price?.toString() || '0.00',
-          inventory_quantity: product.inventory || 0,
-          weight: product.weight || 0,
-          weight_unit: product.weightUnit === 'kg' ? 'kg' : 'lb',
-        },
-      ],
-      metafields: [
-        {
-          namespace: 'boeing',
-          key: 'part_number',
-          value: product.partNumber,
-          type: 'single_line_text_field',
-        },
-        {
-          namespace: 'boeing',
-          key: 'dimensions',
-          value: JSON.stringify({
-            length: product.length,
-            width: product.width,
-            height: product.height,
-            unit: product.dimensionUom,
-          }),
-          type: 'json',
-        },
-        {
-          namespace: 'boeing',
-          key: 'distribution_source',
-          value: product.distrSrc,
-          type: 'single_line_text_field',
-        },
-      ],
-    },
-  };
-};
-
-/**
  * Publish a normalized product to Shopify
  */
 export const publishToShopify = async (product: NormalizedProduct): Promise<ShopifyPublishResponse> => {
-  console.log(`[ShopifyService] Publishing product to Shopify: ${product.partNumber}`);
+  const partNumber = product.partNumber || product.sku;
+  if (!partNumber) {
+    return {
+      success: false,
+      error: 'Missing part number for Shopify publish.',
+    };
+  }
+  console.log(`[ShopifyService] Publishing product to Shopify: ${partNumber}`);
 
   const url = new URL('/api/shopify/publish', API_BASE_URL || window.location.origin);
 
@@ -75,8 +34,9 @@ export const publishToShopify = async (product: NormalizedProduct): Promise<Shop
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      ...getAuthHeaders(),
     },
-    body: JSON.stringify(product),
+    body: JSON.stringify({ part_number: partNumber }),
   });
 
   if (!response.ok) {
@@ -96,7 +56,7 @@ export const publishToShopify = async (product: NormalizedProduct): Promise<Shop
  * Update an existing Shopify product
  */
 export const updateShopifyProduct = async (
-  shopifyProductId: string, 
+  shopifyProductId: string,
   product: NormalizedProduct
 ): Promise<ShopifyPublishResponse> => {
   console.log(`[ShopifyService] Updating Shopify product: ${shopifyProductId}`);
@@ -108,6 +68,7 @@ export const updateShopifyProduct = async (
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      ...getAuthHeaders(),
     },
     body: JSON.stringify(product),
   });
@@ -138,6 +99,7 @@ export const checkProductExists = async (sku: string): Promise<string | null> =>
     method: 'GET',
     headers: {
       Accept: 'application/json',
+      ...getAuthHeaders(),
     },
   });
 

@@ -8,7 +8,7 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { BoeingProduct, NormalizedProduct } from '@/types/product';
+import { NormalizedProduct } from '@/types/product';
 
 // Supabase configuration from Vite env (frontend-safe keys)
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -22,16 +22,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // Table names aligned with agreed schema
-const SUPABASE_TABLE_RAW = 'boeing_raw_data';
 const SUPABASE_TABLE_STAGING = 'product_staging';
-
-/**
- * Store raw Boeing product data for auditing purposes
- * Preserves original API response structure
- */
-export const storeRawBoeingData = async (products: BoeingProduct[]): Promise<void> => {
-  console.warn('[SupabaseService] storeRawBoeingData is deprecated; raw data is now stored on the backend');
-};
 
 /**
  * Store or update normalized product data
@@ -42,28 +33,28 @@ export const saveNormalizedProduct = async (product: NormalizedProduct): Promise
 
   const now = new Date().toISOString();
 
-  const sku = product.partNumber;
-  const title = product.title || product.name;
-  const bodyHtml = product.description;
-  const vendor = product.manufacturer || product.distrSrc || '';
+  const sku = product.partNumber || product.aviall_part_number || product.sku || '';
+  const title = product.title || product.name || sku;
+  const bodyHtml = product.description || '';
+  const vendor = product.manufacturer || product.supplier_name || product.distrSrc || '';
 
   const upsertPayload = {
-    id: sku,
+    id: product.id || sku,
     sku,
     title,
     body_html: bodyHtml,
     vendor,
-    price: product.price,
+    price: product.price ?? product.cost_per_item ?? product.net_price ?? null,
     currency: product.currency ?? 'USD',
-    inventory_quantity: product.inventory,
-    inventory_status: product.availability,
-    weight: product.weight,
-    weight_unit: product.weightUnit,
-    country_of_origin: (product.rawBoeingData as any)?.countryOfOrigin ?? null,
-    dim_length: product.length,
-    dim_width: product.width,
-    dim_height: product.height,
-    dim_uom: product.dimensionUom,
+    inventory_quantity: product.inventory ?? product.inventory_quantity ?? null,
+    inventory_status: product.availability ?? product.inventory_status ?? null,
+    weight: product.weight ?? null,
+    weight_unit: product.weightUnit || product.weight_uom || '',
+    country_of_origin: product.country_of_origin ?? null,
+    dim_length: product.length ?? product.dim_length ?? null,
+    dim_width: product.width ?? product.dim_width ?? null,
+    dim_height: product.height ?? product.dim_height ?? null,
+    dim_uom: product.dimensionUom || product.dim_uom || '',
     status: product.status,
     updated_at: now,
   };

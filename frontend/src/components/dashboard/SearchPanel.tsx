@@ -1,0 +1,595 @@
+import { useState } from 'react';
+import {
+  Loader2,
+  Upload,
+  Search,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  Clock,
+  XCircle,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Trash2,
+  Package,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Progress } from '@/components/ui/progress';
+import { BatchStatusResponse, BatchStatus, NormalizedProduct } from '@/types/product';
+import { ProductTable } from './ProductTable';
+import { cn } from '@/lib/utils';
+
+type StatusFilter = 'all' | 'active' | 'completed' | 'failed' | 'cancelled';
+
+interface SearchPanelProps {
+  activeBatches: BatchStatusResponse[];
+  isStarting: boolean;
+  error: string | null;
+  statusFilter: string | null;
+  onStartSearch: (partNumbers: string) => Promise<void>;
+  onCancelBatch: (batchId: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
+  onClearError: () => void;
+  onSetStatusFilter: (status: string | null) => void;
+  onLoadBatchProducts: (batchId: string) => Promise<NormalizedProduct[]>;
+  onClearBatchProducts: () => void;
+  onBulkPublishBatch: (batchId: string, products: NormalizedProduct[]) => Promise<void>;
+  onEditProduct: (product: NormalizedProduct) => void;
+  onPublishProduct: (productId: string) => Promise<{ success: boolean; error?: string }>;
+  actionLoading: { [key: string]: boolean };
+}
+
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+export function SearchPanel({
+  activeBatches,
+  isStarting,
+  error,
+  statusFilter,
+  onStartSearch,
+  onCancelBatch,
+  onRefresh,
+  onClearError,
+  onSetStatusFilter,
+  onLoadBatchProducts,
+  onClearBatchProducts,
+  onBulkPublishBatch,
+  onEditProduct,
+  onPublishProduct,
+  actionLoading,
+}: SearchPanelProps) {
+  const [partNumbersText, setPartNumbersText] = useState('');
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
+  const [batchProducts, setBatchProducts] = useState<Record<string, NormalizedProduct[]>>({});
+  const [loadingBatches, setLoadingBatches] = useState<Set<string>>(new Set());
+  const [publishingBatches, setPublishingBatches] = useState<Set<string>>(new Set());
+  const [selectedProducts, setSelectedProducts] = useState<Record<string, NormalizedProduct | null>>({});
+
+  const partNumberCount = partNumbersText
+    .split(/[,;\n\r]+/)
+    .filter(pn => pn.trim().length > 0).length;
+
+  const handleSearch = async () => {
+    if (partNumbersText.trim()) {
+      await onStartSearch(partNumbersText);
+      setPartNumbersText('');
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey && partNumbersText.trim()) {
+      e.preventDefault();
+      handleSearch();
+    }
+  };
+
+  const handleLoadBatchProducts = async (batchId: string) => {
+    setLoadingBatches(prev => new Set(prev).add(batchId));
+    try {
+      const products = await onLoadBatchProducts(batchId);
+      setBatchProducts(prev => ({ ...prev, [batchId]: products }));
+    } finally {
+      setLoadingBatches(prev => {
+        const next = new Set(prev);
+        next.delete(batchId);
+        return next;
+      });
+    }
+  };
+
+  const handleClearBatchProducts = (batchId: string) => {
+    setBatchProducts(prev => {
+      const next = { ...prev };
+      delete next[batchId];
+      return next;
+    });
+    onClearBatchProducts();
+  };
+
+  const handleBulkPublishBatch = async (batchId: string) => {
+    const products = batchProducts[batchId];
+    if (!products || products.length === 0) return;
+
+    setPublishingBatches(prev => new Set(prev).add(batchId));
+    try {
+      await onBulkPublishBatch(batchId, products);
+    } finally {
+      setPublishingBatches(prev => {
+        const next = new Set(prev);
+        next.delete(batchId);
+        return next;
+      });
+    }
+  };
+
+  const handleSelectProduct = (batchId: string, product: NormalizedProduct | null) => {
+    setSelectedProducts(prev => ({ ...prev, [batchId]: product }));
+  };
+
+  const toggleBatchExpand = (batchId: string) => {
+    setExpandedBatches(prev => {
+      const next = new Set(prev);
+      if (next.has(batchId)) {
+        next.delete(batchId);
+      } else {
+        next.add(batchId);
+      }
+      return next;
+    });
+  };
+
+  const getStatusIcon = (status: BatchStatus) => {
+    switch (status) {
+      case 'pending':
+        return <Clock className="h-4 w-4 text-muted-foreground" />;
+      case 'processing':
+        return <Loader2 className="h-4 w-4 animate-spin text-primary" />;
+      case 'completed':
+        return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
+      case 'failed':
+        return <AlertCircle className="h-4 w-4 text-destructive" />;
+      case 'cancelled':
+        return <XCircle className="h-4 w-4 text-muted-foreground" />;
+      default:
+        return null;
+    }
+  };
+
+  const getStatusBadgeClass = (status: BatchStatus) => {
+    switch (status) {
+      case 'pending':
+        return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+      case 'processing':
+        return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
+      case 'completed':
+        return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
+      case 'failed':
+        return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+      case 'cancelled':
+        return 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500';
+      default:
+        return '';
+    }
+  };
+
+  const formatTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const activeBatchesCount = activeBatches.filter(
+    b => b.status === 'pending' || b.status === 'processing'
+  ).length;
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Search Input Section */}
+      <div className="bg-card border-b border-border px-6 py-5">
+        <div className="max-w-4xl">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+              <Search className="h-4 w-4 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-foreground">Search Parts</h2>
+              <p className="text-xs text-muted-foreground">
+                Enter one or more part numbers to search and fetch from Boeing
+              </p>
+            </div>
+          </div>
+
+          {/* Error Alert */}
+          {error && (
+            <div className="mb-3 bg-destructive/10 border border-destructive/20 rounded-lg p-3 flex items-start justify-between">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                <span className="text-sm text-destructive">{error}</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onClearError}
+                className="h-6 w-6 p-0 hover:bg-destructive/10"
+              >
+                <X className="h-3 w-3 text-destructive" />
+              </Button>
+            </div>
+          )}
+
+          {/* Search Input */}
+          <div className="flex gap-3">
+            <div className="flex-1 relative">
+              <Textarea
+                placeholder="Enter part number(s) — separate multiple with commas, semicolons, or new lines&#10;Example: PN-001, PN-002, PN-003"
+                value={partNumbersText}
+                onChange={e => setPartNumbersText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="min-h-[72px] font-mono text-sm resize-none pr-16"
+              />
+              {partNumberCount > 0 && (
+                <span className="absolute bottom-2 right-2 text-xs text-muted-foreground bg-background px-2 py-0.5 rounded border">
+                  {partNumberCount} part{partNumberCount !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            <Button
+              onClick={handleSearch}
+              disabled={isStarting || partNumberCount === 0}
+              className="h-auto min-w-[100px] self-stretch"
+              size="lg"
+            >
+              {isStarting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <Search className="h-4 w-4 mr-2" />
+                  Search
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Batches Section */}
+      <div className="flex-1 overflow-auto bg-muted/30">
+        <div className="px-6 py-4">
+          {/* Section Header */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium text-foreground">Recent Searches</h3>
+              {activeBatchesCount > 0 && (
+                <span className="bg-primary text-primary-foreground text-xs px-2 py-0.5 rounded-full font-medium">
+                  {activeBatchesCount} active
+                </span>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onRefresh()}
+              className="h-8 text-xs"
+            >
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Refresh
+            </Button>
+          </div>
+
+          {/* Status Filter Tabs */}
+          <div className="flex items-center gap-1 mb-4 p-1 bg-muted rounded-lg w-fit">
+            {STATUS_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                onClick={() => onSetStatusFilter(filter.value === 'all' ? null : filter.value)}
+                className={cn(
+                  "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                  (statusFilter === filter.value || (filter.value === 'all' && !statusFilter))
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Pipeline Legend */}
+          <div className="flex items-center gap-4 text-xs text-muted-foreground mb-4">
+            <span className="font-medium">Pipeline stages:</span>
+            <div className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-slate-400" />
+              <span>Extracted</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-amber-400" />
+              <span>Normalized</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              <span>Published</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-red-500" />
+              <span>Failed</span>
+            </div>
+          </div>
+
+          {/* Empty State */}
+          {activeBatches.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="rounded-full bg-muted p-4 mb-4">
+                <Package className="h-8 w-8 text-muted-foreground" />
+              </div>
+              <h3 className="text-base font-medium text-foreground mb-1">No searches yet</h3>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                Enter part numbers above to search and fetch product data from Boeing Commerce Connect.
+              </p>
+            </div>
+          )}
+
+          {/* Batch Cards */}
+          <div className="space-y-3">
+            {activeBatches.slice(0, 10).map(batch => {
+              const hasProducts = batchProducts[batch.id] && batchProducts[batch.id].length > 0;
+              const unpublishedCount = hasProducts
+                ? batchProducts[batch.id].filter(p => p.status !== 'published').length
+                : 0;
+
+              return (
+                <div
+                  key={batch.id}
+                  className={cn(
+                    "border rounded-lg bg-card shadow-sm transition-shadow",
+                    hasProducts && "shadow-md"
+                  )}
+                >
+                  {/* Batch Header */}
+                  <div className="px-4 py-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        {getStatusIcon(batch.status)}
+                        <span className="text-sm font-medium capitalize">
+                          {batch.batch_type}
+                        </span>
+                        <span className={cn(
+                          "text-xs px-2 py-0.5 rounded-full font-medium",
+                          getStatusBadgeClass(batch.status)
+                        )}>
+                          {batch.status}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          {formatTime(batch.created_at)}
+                        </span>
+                        {['pending', 'processing'].includes(batch.status) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onCancelBatch(batch.id)}
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          >
+                            Cancel
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleBatchExpand(batch.id)}
+                          className="h-7 w-7 p-0"
+                        >
+                          {expandedBatches.has(batch.id) ? (
+                            <ChevronUp className="h-4 w-4" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="mb-2">
+                      <Progress
+                        value={batch.progress_percent}
+                        className={cn(
+                          "h-1.5",
+                          batch.status === 'completed' && "[&>div]:bg-emerald-500"
+                        )}
+                      />
+                    </div>
+
+                    {/* Progress Stats */}
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <div className="flex items-center gap-3">
+                        <span>Total: <span className="font-medium text-foreground">{batch.total_items}</span></span>
+                        {batch.batch_type === 'search' ? (
+                          <>
+                            <span>Extracted: <span className="font-medium text-foreground">{batch.extracted_count}</span></span>
+                            <span>Normalized: <span className="font-medium text-foreground">{batch.normalized_count}</span></span>
+                          </>
+                        ) : (
+                          <span>Published: <span className="font-medium text-foreground">{batch.published_count}</span></span>
+                        )}
+                        {batch.failed_count > 0 && (
+                          <span className="text-destructive">
+                            Failed: <span className="font-medium">{batch.failed_count}</span>
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-medium text-foreground">
+                        {batch.progress_percent.toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Action Buttons for completed search batches */}
+                  {batch.status === 'completed' && batch.batch_type === 'search' && batch.normalized_count > 0 && (
+                    <div className="px-4 py-2 border-t border-border bg-muted/30 flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleLoadBatchProducts(batch.id)}
+                        disabled={loadingBatches.has(batch.id)}
+                        className="h-8 text-xs"
+                      >
+                        {loadingBatches.has(batch.id) ? (
+                          <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                        ) : (
+                          <Download className="h-3 w-3 mr-1.5" />
+                        )}
+                        Load Products ({batch.normalized_count})
+                      </Button>
+                      {hasProducts && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleClearBatchProducts(batch.id)}
+                            className="h-8 text-xs"
+                          >
+                            <ChevronUp className="h-3 w-3 mr-1.5" />
+                            Hide
+                          </Button>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => handleBulkPublishBatch(batch.id)}
+                            disabled={publishingBatches.has(batch.id) || unpublishedCount === 0}
+                            className="h-8 text-xs"
+                          >
+                            {publishingBatches.has(batch.id) ? (
+                              <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                            ) : (
+                              <Upload className="h-3 w-3 mr-1.5" />
+                            )}
+                            Publish All ({unpublishedCount})
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Products Table */}
+                  {hasProducts && (
+                    <div className="border-t border-border">
+                      <ProductTable
+                        products={batchProducts[batch.id]}
+                        selectedProduct={selectedProducts[batch.id] || null}
+                        actionLoading={actionLoading}
+                        onSelectProduct={(product) => handleSelectProduct(batch.id, product)}
+                        onEditProduct={onEditProduct}
+                        onPublishProduct={onPublishProduct}
+                      />
+                    </div>
+                  )}
+
+                  {/* Expanded Details */}
+                  {expandedBatches.has(batch.id) && (
+                    <div className="px-4 py-3 border-t border-border bg-muted/20 space-y-3">
+                      <div className="text-xs">
+                        <span className="text-muted-foreground">Batch ID: </span>
+                        <span className="font-mono text-foreground">{batch.id}</span>
+                      </div>
+
+                      {/* Pipeline Tracking - Part Numbers */}
+                      {batch.part_numbers && batch.part_numbers.length > 0 && (
+                        <div className="text-xs">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Package className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="font-medium text-foreground">
+                              Part Numbers in Pipeline ({batch.part_numbers.length})
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto p-2 bg-background rounded border">
+                            {batch.part_numbers.map((pn, idx) => {
+                              // Determine status of this part number
+                              const isFailed = batch.failed_items?.some(f => f.part_number === pn);
+                              return (
+                                <span
+                                  key={idx}
+                                  className={cn(
+                                    "font-mono px-2 py-0.5 rounded text-xs",
+                                    isFailed
+                                      ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                      : batch.status === 'completed'
+                                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                        : batch.status === 'processing'
+                                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                          : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                                  )}
+                                >
+                                  {pn}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Error Message */}
+                      {batch.error_message && (
+                        <div className="text-xs">
+                          <div className="flex items-center gap-2 mb-1">
+                            <AlertCircle className="h-3.5 w-3.5 text-destructive" />
+                            <span className="font-medium text-destructive">Error</span>
+                          </div>
+                          <div className="text-destructive bg-destructive/10 rounded p-2 border border-destructive/20">
+                            {batch.error_message}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Failed Items - Enhanced Display */}
+                      {batch.failed_items && batch.failed_items.length > 0 && (
+                        <div className="text-xs">
+                          <div className="flex items-center gap-2 mb-2">
+                            <XCircle className="h-3.5 w-3.5 text-destructive" />
+                            <span className="font-medium text-destructive">
+                              Failed Items ({batch.failed_items.length})
+                            </span>
+                          </div>
+                          <div className="bg-destructive/5 rounded border border-destructive/20 overflow-hidden">
+                            <div className="max-h-[150px] overflow-y-auto">
+                              <table className="w-full text-xs">
+                                <thead className="bg-destructive/10 sticky top-0">
+                                  <tr>
+                                    <th className="text-left px-3 py-1.5 font-medium text-destructive">Part Number</th>
+                                    <th className="text-left px-3 py-1.5 font-medium text-destructive">Error</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-destructive/10">
+                                  {batch.failed_items.map((item, idx) => (
+                                    <tr key={idx} className="hover:bg-destructive/5">
+                                      <td className="px-3 py-1.5 font-mono text-foreground whitespace-nowrap">
+                                        {item.part_number}
+                                      </td>
+                                      <td className="px-3 py-1.5 text-muted-foreground">
+                                        {item.error}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

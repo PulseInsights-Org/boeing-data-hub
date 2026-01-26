@@ -1,0 +1,681 @@
+import logging
+from typing import Any, Dict, Optional
+import httpx
+from fastapi import HTTPException
+
+from app.core.config import Settings
+
+logger = logging.getLogger("shopify_client")
+
+class ShopifyClient:
+    def __init__(self, settings: Settings) -> None:
+        self._store_domain = settings.shopify_store_domain
+        self._token = settings.shopify_admin_api_token
+        self._api_version = settings.shopify_api_version
+        self._location_map = {}
+        self._location_name_map = settings.shopify_location_map or {}
+
+    async def _get_location_map(self) -> Dict[str, int]:
+        if self._location_map:
+            return self._location_map
+        data = await self._call_shopify("GET", "/locations.json")
+        locations = data.get("locations") or []
+        self._location_map = {
+            loc.get("name"): int(loc.get("id"))
+            for loc in locations
+            if loc.get("name") and loc.get("id") is not None
+        }
+        logger.info("shopify locations loaded=%s", list(self._location_map.keys()))
+        return self._location_map
+
+    async def _set_inventory_levels(
+        self,
+        inventory_item_id: int,
+        location_quantities: list[dict],
+    ) -> None:
+        if not location_quantities:
+            return
+        try:
+            location_map = await self._get_location_map()
+        except HTTPException as exc:
+            logger.info("shopify inventory levels skipped error=%s", exc.detail)
+            return
+        matched = 0
+        total_qty = 0
+        for loc in location_quantities:
+            loc_name = loc.get("location")
+            qty = loc.get("quantity")
+            if loc_name is None or qty is None:
+                continue
+            total_qty += int(qty)
+            mapped_name = self._location_name_map.get(loc_name, loc_name)
+            location_id = location_map.get(mapped_name)
+            if location_id is None:
+                logger.info("shopify location missing name=%s mapped=%s", loc_name, mapped_name)
+                continue
+            payload = {
+                "location_id": location_id,
+                "inventory_item_id": inventory_item_id,
+                "available": int(qty),
+            }
+            await self._call_shopify("POST", "/inventory_levels/set.json", json=payload)
+            matched += 1
+
+        if matched == 0 and location_map:
+            fallback_location_id = next(iter(location_map.values()))
+            payload = {
+                "location_id": fallback_location_id,
+                "inventory_item_id": inventory_item_id,
+                "available": int(total_qty),
+            }
+            logger.info("shopify inventory fallback location_id=%s total_qty=%s", fallback_location_id, total_qty)
+            await self._call_shopify("POST", "/inventory_levels/set.json", json=payload)
+
+    async def _set_inventory_cost(self, inventory_item_id: int, cost_per_item: float | None) -> None:
+        if cost_per_item is None:
+            return
+        payload = {
+            "inventory_item": {
+                "id": inventory_item_id,
+                "cost": float(cost_per_item),
+            }
+        }
+        await self._call_shopify("PUT", f"/inventory_items/{inventory_item_id}.json", json=payload)
+
+    def _to_gid(self, entity: str, value: str | int) -> str:
+        if isinstance(value, str) and value.startswith("gid://"):
+            return value
+        return f"gid://shopify/{entity}/{value}"
+
+    async def _set_product_category(self, product_id: int) -> None:
+        """Set product category to 'Aircraft Parts & Accessories' using GraphQL.
+
+        Uses hardcoded category ID to avoid multiple API calls for taxonomy lookup.
+        The category ID 'gid://shopify/TaxonomyCategory/vp-1-1' corresponds to:
+        Vehicles & Parts > Vehicle Parts & Accessories > Aircraft Parts & Accessories
+
+        Note: productCategory in ProductInput requires API version 2024-10+.
+        If using an older API version, this will fail silently.
+        """
+        # Hardcoded category ID for "Aircraft Parts & Accessories"
+        # This avoids 3-4 GraphQL calls to traverse the taxonomy hierarchy
+        category_gid = "gid://shopify/TaxonomyCategory/vp-1-1"
+
+        mutation = """
+            mutation productUpdate($input: ProductInput!) {
+                productUpdate(input: $input) {
+                    product {
+                        id
+                        productCategory {
+                            productTaxonomyNode {
+                                id
+                                name
+                            }
+                        }
+                    }
+                    userErrors { field message }
+                }
+            }
+        """
+        variables = {
+            "input": {
+                "id": self._to_gid("Product", product_id),
+                "productCategory": {
+                    "productTaxonomyNodeId": category_gid,
+                },
+            }
+        }
+
+        try:
+            result = await self._call_shopify_graphql(mutation, variables)
+            errors = (result.get("data") or {}).get("productUpdate", {}).get("userErrors") or []
+            if errors:
+                logger.info("shopify category set failed product_id=%s errors=%s", product_id, errors)
+            else:
+                category = (result.get("data") or {}).get("productUpdate", {}).get("product", {}).get("productCategory")
+                logger.info("shopify category set success product_id=%s category=%s", product_id, category)
+        except HTTPException as exc:
+            logger.info("shopify category set error product_id=%s detail=%s", product_id, exc.detail)
+
+    async def _set_inventory_levels_graphql(
+        self,
+        inventory_item_id: str | int,
+        location_quantities: list[dict],
+    ) -> None:
+        if not location_quantities:
+            return
+        try:
+            location_map = await self._get_location_map()
+        except HTTPException as exc:
+            logger.info("shopify inventory levels skipped error=%s", exc.detail)
+            return
+
+        matched = 0
+        total_qty = 0
+        set_quantities = []
+        for loc in location_quantities:
+            loc_name = loc.get("location")
+            qty = loc.get("quantity")
+            if loc_name is None or qty is None:
+                continue
+            total_qty += int(qty)
+            mapped_name = self._location_name_map.get(loc_name, loc_name)
+            location_id = location_map.get(mapped_name)
+            if location_id is None:
+                logger.info("shopify location missing name=%s mapped=%s", loc_name, mapped_name)
+                continue
+            set_quantities.append(
+                {
+                    "inventoryItemId": self._to_gid("InventoryItem", inventory_item_id),
+                    "locationId": self._to_gid("Location", location_id),
+                    "quantity": int(qty),
+                }
+            )
+            matched += 1
+
+        if matched == 0 and location_map:
+            fallback_location_id = next(iter(location_map.values()))
+            set_quantities.append(
+                {
+                    "inventoryItemId": self._to_gid("InventoryItem", inventory_item_id),
+                    "locationId": self._to_gid("Location", fallback_location_id),
+                    "quantity": int(total_qty),
+                }
+            )
+            logger.info("shopify inventory fallback location_id=%s total_qty=%s", fallback_location_id, total_qty)
+
+        if not set_quantities:
+            return
+
+        mutation = (
+            "mutation InventorySetOnHand($input: InventorySetOnHandQuantitiesInput!) { "
+            "inventorySetOnHandQuantities(input: $input) { userErrors { field message } } }"
+        )
+        variables = {
+            "input": {
+                "reason": "correction",
+                "setQuantities": set_quantities,
+            }
+        }
+        data = await self._call_shopify_graphql(mutation, variables)
+        errors = (data.get("data") or {}).get("inventorySetOnHandQuantities", {}).get("userErrors") or []
+        if errors:
+            raise HTTPException(status_code=502, detail=str(errors))
+
+    def _base_url(self) -> str:
+        if not self._store_domain or not self._token:
+            raise HTTPException(status_code=500, detail="Shopify env vars missing")
+        return f"https://{self._store_domain}/admin/api/{self._api_version}"
+
+    async def _call_shopify(
+        self,
+        method: str,
+        path: str,
+        json: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        base = self._base_url()
+        url = f"{base}{path}"
+        logger.info("shopify request method=%s path=%s params=%s", method, path, params)
+
+        headers = {
+            "X-Shopify-Access-Token": self._token or "",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.request(method=method, url=url, headers=headers, json=json, params=params)
+
+        logger.info("shopify response status=%s path=%s", resp.status_code, path)
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+        if resp.text:
+            return resp.json()
+        return {}
+
+    async def _call_shopify_graphql(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        payload = {"query": query, "variables": variables or {}}
+        data = await self._call_shopify("POST", "/graphql.json", json=payload)
+        if data.get("errors"):
+            raise HTTPException(status_code=502, detail=str(data.get("errors")))
+        return data
+
+    def _build_metafields(self, product: Dict[str, Any]) -> list[Dict[str, Any]]:
+        """Build metafields using 'custom' namespace to match Shopify admin definitions.
+
+        Only includes fields shown in the live store product metafields:
+        - Inventory location, Part number, Alternate part number, Unit of measure
+        - Condition, Cert, Trace, Manufacturer, Expiration date, PMA
+        - Estimated lead time (in days), Notes
+        """
+        shopify_data = product.get("shopify") or {}
+
+        # Get the raw SKU (e.g., "4811-160-3=E9")
+        raw_sku = shopify_data.get("sku") or product.get("sku") or product.get("partNumber") or ""
+
+        # Part number: strip the =XX suffix (e.g., "4811-160-3=E9" -> "4811-160-3")
+        part_number = raw_sku.split("=")[0] if "=" in raw_sku else raw_sku
+
+        # Alternate part number: same as part number (both without suffix)
+        title = shopify_data.get("title") or product.get("title") or ""
+        alternate_part_number = title.split("=")[0] if "=" in title else title
+
+        manufacturer = shopify_data.get("manufacturer") or product.get("manufacturer") or product.get("supplier_name") or ""
+        base_uom = shopify_data.get("unit_of_measure") or product.get("baseUOM") or product.get("base_uom") or ""
+        condition = product.get("condition") or "NE"
+        pma = product.get("pma")
+        lead_time = product.get("estimated_lead_time_days") or product.get("estimatedLeadTimeDays") or 3
+        location_summary = shopify_data.get("location_summary") or product.get("location_summary") or ""
+        trace = shopify_data.get("trace") or product.get("trace") or ""
+        expiration_date = shopify_data.get("expiration_date") or product.get("expiration_date") or ""
+        notes = shopify_data.get("notes") or product.get("notes") or ""
+        cert = shopify_data.get("cert") or product.get("cert") or "FAA 8130-3"
+
+        # Only include fields that are shown in the live store product metafields
+        raw = [
+            ("inventory_location", location_summary, "single_line_text_field"),
+            ("part_number", part_number, "single_line_text_field"),
+            ("alternate_part_number", alternate_part_number, "single_line_text_field"),
+            ("unit_of_measure", base_uom, "single_line_text_field"),
+            ("condition", condition, "single_line_text_field"),
+            ("cert", cert, "single_line_text_field"),
+            ("trace", trace, "url"),
+            ("manufacturer", manufacturer, "single_line_text_field"),
+            ("expiration_date", expiration_date, "date"),
+            ("pma", str(pma).lower() if pma is not None else "", "boolean"),
+            ("estimated_lead_time", str(lead_time), "number_integer"),
+            ("notes", notes, "multi_line_text_field"),
+        ]
+
+        metafields = []
+        for key, value, mtype in raw:
+            if str(value).strip() == "":
+                continue
+            metafields.append(
+                {
+                    "namespace": "custom",
+                    "key": key,
+                    "value": str(value),
+                    "type": mtype,
+                }
+            )
+        return metafields
+
+    def to_shopify_product_body(self, product: Dict[str, Any]) -> Dict[str, Any]:
+        shopify_data = product.get("shopify") or {}
+        title = shopify_data.get("title") or product.get("title") or product.get("name") or product.get("partNumber")
+        description = shopify_data.get("description") or product.get("description") or ""
+        body_html = shopify_data.get("body_html") or (f"<p>{description}</p>" if description.strip() else "")
+        manufacturer = shopify_data.get("manufacturer") or product.get("manufacturer") or ""
+        vendor = shopify_data.get("vendor") or product.get("vendor") or ""
+        country_of_origin = shopify_data.get("country_of_origin") or product.get("countryOfOrigin") or ""
+
+        # Pricing logic: cost_per_item is base Boeing listPrice (if available) otherwise netPrice/price;
+        # storefront price is 1.1x that base cost unless explicitly overridden.
+        base_cost = (
+            shopify_data.get("cost_per_item")
+            or product.get("list_price")
+            or product.get("net_price")
+            or product.get("price")
+            or 0
+        )
+        price = shopify_data.get("price") or (base_cost * 1.1 if base_cost else 0)
+        inventory = shopify_data.get("inventory_quantity") or product.get("inventory") or product.get("inventory_quantity") or 0
+        weight = shopify_data.get("weight") or product.get("weight") or 0
+        weight_unit = shopify_data.get("weight_uom") or product.get("weightUnit") or "lb"
+
+        part_number = shopify_data.get("sku") or product.get("sku") or product.get("partNumber") or ""
+        dim = {
+            "length": shopify_data.get("length") or product.get("length") or product.get("dim_length"),
+            "width": shopify_data.get("width") or product.get("width") or product.get("dim_width"),
+            "height": shopify_data.get("height") or product.get("height") or product.get("dim_height"),
+            "unit": shopify_data.get("dim_uom") or product.get("dimensionUom") or product.get("dim_uom"),
+        }
+
+        base_uom = shopify_data.get("unit_of_measure") or product.get("baseUOM") or product.get("base_uom") or ""
+        hazmat_code = product.get("hazmatCode") or product.get("hazmat_code") or ""
+        faa_approval = product.get("faaApprovalCode") or product.get("faa_approval_code") or ""
+        eccn = product.get("eccn") or ""
+        schedule_b_code = product.get("schedule_b_code") or ""
+        condition = product.get("condition") or "NE"
+        pma = product.get("pma") or False
+        lead_time = product.get("estimated_lead_time_days") or product.get("estimatedLeadTimeDays") or 3
+        trace = shopify_data.get("trace") or product.get("trace") or ""
+        expiration_date = shopify_data.get("expiration_date") or product.get("expiration_date") or ""
+        notes = shopify_data.get("notes") or product.get("notes") or ""
+
+        tags = [
+            "boeing",
+            "aerospace",
+            "Aircraft Parts & Accessories",
+        ]
+        if country_of_origin:
+            tags.append(f"origin-{country_of_origin.lower().replace(' ', '-')}")
+
+        images = []
+        # Use only the image_url (which should be either Supabase-hosted or placeholder)
+        # Don't add Boeing URLs directly as Shopify can't fetch them
+        primary_image = product.get("image_url") or shopify_data.get("product_image") or product.get("product_image")
+        if primary_image:
+            images.append({"src": primary_image})
+        # Only add thumbnail if it's different AND not a Boeing/aviall URL (which Shopify can't fetch)
+        thumbnail_image = shopify_data.get("thumbnail_image") or product.get("thumbnail_image")
+        if thumbnail_image and thumbnail_image != primary_image:
+            # Skip Boeing/aviall URLs - Shopify can't fetch them
+            if "aviall.com" not in thumbnail_image and "boeing.com" not in thumbnail_image:
+                images.append({"src": thumbnail_image})
+        if not images:
+            images.append(
+                {
+                    "src": "https://placehold.co/800x600/e8e8e8/666666/png?text=Image+Not+Available&font=roboto",
+                }
+            )
+        logger.info("shopify product images=%s", images)
+
+        # build a simple human-readable inventory location summary, if provided
+        location_quantities = (shopify_data.get("location_quantities") or [])
+        inventory_location_str = shopify_data.get("location_summary") or ""
+        if not inventory_location_str and location_quantities:
+            inventory_location_str = ", ".join(
+                f"{loc.get('location')}: {loc.get('quantity')}"
+                for loc in location_quantities
+                if loc.get("location") and loc.get("quantity") is not None
+            )
+
+        payload = {
+            "product": {
+                "title": title,
+                "body_html": body_html,
+                "vendor": vendor or manufacturer,
+                "product_type": "Aircraft Parts & Accessories",
+                "tags": tags,
+                "images": images,
+                "variants": [
+                    {
+                        "sku": part_number,
+                        "price": str(price),
+                        "inventory_management": "shopify",
+                        "inventory_quantity": int(inventory),
+                        "weight": float(weight) if weight else 0,
+                        "weight_unit": "kg" if weight_unit == "kg" else "lb",
+                    }
+                ],
+                "metafields": [
+                    {
+                        "namespace": "boeing",
+                        "key": "part_number",
+                        "value": part_number,
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "alternate_part_number",
+                        "value": title,
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "dimensions",
+                        "value": str(dim),
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "distribution_source",
+                        "value": product.get("supplierName") or product.get("supplier_name") or "",
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "country_of_origin",
+                        "value": country_of_origin,
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "unit_of_measure",
+                        "value": base_uom,
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "manufacturer",
+                        "value": shopify_data.get("manufacturer") or product.get("manufacturer") or product.get("supplier_name") or "",
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "hazmat_code",
+                        "value": hazmat_code,
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "faa_approval_code",
+                        "value": faa_approval,
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "eccn",
+                        "value": eccn,
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "schedule_b_code",
+                        "value": schedule_b_code,
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "description",
+                        "value": shopify_data.get("description") or product.get("name") or "",
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "condition",
+                        "value": condition,
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "pma",
+                        "value": str(pma).lower(),
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "estimated_lead_time",
+                        "value": str(lead_time),
+                        "type": "number_integer",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "cert",
+                        "value": shopify_data.get("cert") or product.get("cert") or "FAA 8130-3",
+                        "type": "single_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "trace",
+                        "value": trace,
+                        "type": "url",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "expiration_date",
+                        "value": expiration_date,
+                        "type": "date",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "notes",
+                        "value": notes,
+                        "type": "multi_line_text_field",
+                    },
+                    {
+                        "namespace": "boeing",
+                        "key": "inventory_location",
+                        "value": inventory_location_str,
+                        "type": "single_line_text_field",
+                    },
+                ],
+            }
+        }
+        payload["product"]["metafields"] = self._build_metafields(product)
+        return payload
+
+    async def create_metafield_definitions(self) -> None:
+        """Create metafield definitions using 'custom' namespace to match Shopify admin."""
+        definitions = [
+            {"namespace": "custom", "key": "part_number", "name": "Part Number", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "alternate_part_number", "name": "Alternate part number", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "dimensions", "name": "Dimensions", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "distribution_source", "name": "Distribution Source", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "country_of_origin", "name": "Country Of Origin", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "unit_of_measure", "name": "Unit of measure", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "manufacturer", "name": "Manufacturer", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "hazmat_code", "name": "Hazmat Code", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "faa_approval_code", "name": "FAA Approval Code", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "eccn", "name": "ECCN", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "schedule_b_code", "name": "Schedule B Code", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "description", "name": "Description", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "condition", "name": "Condition", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "pma", "name": "PMA", "type": "boolean"},
+            {"namespace": "custom", "key": "estimated_lead_time", "name": "Estimated lead time (in days)", "type": "number_integer"},
+            {"namespace": "custom", "key": "cert", "name": "Cert", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "inventory_location", "name": "Inventory location", "type": "single_line_text_field"},
+            {"namespace": "custom", "key": "trace", "name": "Trace", "type": "url"},
+            {"namespace": "custom", "key": "expiration_date", "name": "Expiration date", "type": "date"},
+            {"namespace": "custom", "key": "notes", "name": "Notes", "type": "multi_line_text_field"},
+        ]
+
+        for definition in definitions:
+            payload = {"metafield_definition": {**definition, "owner_type": "product"}}
+            try:
+                await self._call_shopify("POST", "/metafield_definitions.json", json=payload)
+            except HTTPException as exc:
+                # 422: definition already exists; 406: not acceptable/unsupported via REST on this store.
+                if exc.status_code in (406, 422):
+                    logger.info(
+                        "shopify metafield definition skipped status=%s key=%s detail=%s",
+                        exc.status_code,
+                        definition["key"],
+                        exc.detail,
+                    )
+                    continue
+                raise
+
+    async def publish_product(self, product: Dict[str, Any]) -> Dict[str, Any]:
+        """Publish product using REST API for better metafield support."""
+        body = self.to_shopify_product_body(product)
+        logger.info("shopify publish payload=%s", body)
+
+        # Use REST API to create product with metafields in one call
+        data = await self._call_shopify("POST", "/products.json", json=body)
+        shopify_product = data.get("product") or {}
+        product_id = shopify_product.get("id")
+
+        logger.info("shopify product created id=%s", product_id)
+
+        # Set product category using GraphQL (REST API doesn't support standardized categories)
+        if product_id:
+            await self._set_product_category(product_id)
+
+        # Set inventory levels if we have location quantities
+        variants = shopify_product.get("variants") or []
+        location_quantities = (product.get("shopify") or {}).get("location_quantities") or []
+        if variants and location_quantities:
+            inventory_item_id = variants[0].get("inventory_item_id")
+            if inventory_item_id is not None:
+                await self._set_inventory_levels(int(inventory_item_id), location_quantities)
+
+        # Set cost per item
+        cost_per_item = (product.get("shopify") or {}).get("cost_per_item")
+        if variants and cost_per_item is not None:
+            inventory_item_id = variants[0].get("inventory_item_id")
+            if inventory_item_id is not None:
+                await self._set_inventory_cost(int(inventory_item_id), cost_per_item)
+
+        return {"product": {"id": product_id, "handle": shopify_product.get("handle")}}
+
+    async def update_product(self, shopify_product_id: str, product: Dict[str, Any]) -> Dict[str, Any]:
+        body = self.to_shopify_product_body(product)
+        body["product"]["id"] = int(shopify_product_id)
+        logger.info("shopify update payload id=%s payload=%s", shopify_product_id, body)
+        data = await self._call_shopify("PUT", f"/products/{shopify_product_id}.json", json=body)
+        shopify_product = data.get("product") or {}
+        variants = shopify_product.get("variants") or []
+        location_quantities = (product.get("shopify") or {}).get("location_quantities") or []
+        if variants and location_quantities:
+            inventory_item_id = variants[0].get("inventory_item_id")
+            if inventory_item_id is not None:
+                await self._set_inventory_levels(int(inventory_item_id), location_quantities)
+        if variants:
+            inventory_item_id = variants[0].get("inventory_item_id")
+            if inventory_item_id is not None:
+                await self._set_inventory_cost(int(inventory_item_id), (product.get("shopify") or {}).get("cost_per_item"))
+        return data
+
+    async def find_product_by_sku(self, sku: str) -> Optional[str]:
+        params = {
+            "limit": 50,
+            "fields": "id,variants",
+        }
+        data = await self._call_shopify("GET", "/products.json", params=params)
+        products = data.get("products") or []
+        for p in products:
+            for v in p.get("variants", []):
+                if v.get("sku") == sku:
+                    return str(p.get("id"))
+        return None
+
+    async def get_variant_by_sku(self, sku: str) -> Optional[Dict[str, Any]]:
+        query = (
+            "query GetSkuData($skuQuery: String!) { "
+            "productVariants(first: 5, query: $skuQuery) { "
+            "edges { node { id sku title price compareAtPrice inventoryQuantity } } } }"
+        )
+        body = {
+            "query": query,
+            "variables": {"skuQuery": sku},
+        }
+        data = await self._call_shopify("POST", "/graphql.json", json=body)
+        if not data:
+            return None
+        if data.get("errors"):
+            raise HTTPException(status_code=502, detail=str(data.get("errors")))
+
+        edges = (data.get("data") or {}).get("productVariants", {}).get("edges", [])
+        if not edges:
+            return None
+        for edge in edges:
+            node = edge.get("node") or {}
+            if node.get("sku") == sku:
+                return node
+        return (edges[0].get("node") or {}) if edges else None
+
+    async def delete_product(self, product_id: int | str) -> bool:
+        """
+        Delete a product from Shopify.
+
+        Used for compensation/rollback when DB save fails after Shopify publish.
+        This implements the Saga pattern for transaction safety.
+
+        Args:
+            product_id: Shopify product ID to delete
+
+        Returns:
+            bool: True if deletion was successful
+        """
+        try:
+            await self._call_shopify("DELETE", f"/products/{product_id}.json")
+            logger.info(f"shopify product deleted id={product_id}")
+            return True
+        except HTTPException as exc:
+            logger.error(f"shopify product delete failed id={product_id} error={exc.detail}")
+            raise

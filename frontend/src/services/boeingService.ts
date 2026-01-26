@@ -9,6 +9,7 @@
  */
 
 import { BoeingProduct, ProductSearchParams } from '@/types/product';
+import { getAuthHeaders } from '@/services/authService';
 
 // Base URL for backend API (FastAPI). Configure via Vite env.
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -26,6 +27,7 @@ export const searchProducts = async (params: ProductSearchParams): Promise<Boein
     method: 'GET',
     headers: {
       Accept: 'application/json',
+      ...getAuthHeaders(),
     },
   });
 

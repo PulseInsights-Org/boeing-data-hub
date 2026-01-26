@@ -3,6 +3,7 @@ import { NormalizedProduct, ProductStatus } from '@/types/product';
 import { searchProducts } from '@/services/boeingService';
 import { saveNormalizedProduct } from '@/services/supabaseService';
 import { publishToShopify } from '@/services/shopifyService';
+import { getStagingProducts, StagingProduct } from '@/services/bulkService';
 
 // Action types for reducer
 type ProductAction =
@@ -41,9 +42,11 @@ interface UseProductsReturn {
   actionLoading: { [key: string]: boolean };
   selectProduct: (product: NormalizedProduct | null) => void;
   fetchProducts: (query: string) => Promise<void>;
+  loadStagingProducts: (limit?: number, offset?: number) => Promise<void>;
   updateProduct: (product: NormalizedProduct) => Promise<void>;
   publishProduct: (productId: string) => Promise<{ success: boolean; error?: string }>;
   clearError: () => void;
+  clearProducts: () => void;
 }
 
 export function useProducts(): UseProductsReturn {
@@ -76,15 +79,32 @@ export function useProducts(): UseProductsReturn {
       const boeingProducts = await searchProducts({ query });
 
       const now = new Date().toISOString();
-      const normalizedProducts: NormalizedProduct[] = boeingProducts.map(p => ({
+      const normalizedProducts: NormalizedProduct[] = boeingProducts.map((p: any) => ({
+        // Spread all backend fields
         ...p,
-        price: (p as any).price ?? null,
-        inventory: (p as any).inventory ?? null,
-        availability: (p as any).availability ?? null,
-        currency: (p as any).currency ?? null,
+        // Map backend field names to frontend field names
+        id: p.aviall_part_number || p.id || p.sku,
+        partNumber: p.aviall_part_number || p.sku || '',
+        name: p.name || p.title || '',
+        description: p.description || '',
+        manufacturer: p.manufacturer || p.supplier_name || '',
+        length: p.dim_length ?? null,
+        width: p.dim_width ?? null,
+        height: p.dim_height ?? null,
+        dimensionUom: p.dim_uom || '',
+        weight: p.weight ?? null,
+        weightUnit: p.weight_uom || '',
+        // Price mapping - backend uses cost_per_item and net_price
+        price: p.cost_per_item ?? p.net_price ?? null,
+        inventory: p.inventory_quantity ?? null,
+        availability: p.inventory_status ?? null,
+        currency: p.currency ?? 'USD',
+        // Status fields
         status: 'fetched' as ProductStatus,
-        title: p.name,
+        title: p.title || p.name || p.aviall_part_number || '',
         lastModified: now,
+        // Keep raw data
+        rawBoeingData: {},
       }));
 
       dispatch({ type: 'ADD_PRODUCTS', payload: normalizedProducts });
@@ -147,6 +167,101 @@ export function useProducts(): UseProductsReturn {
     setError(null);
   }, []);
 
+  const clearProducts = useCallback(() => {
+    dispatch({ type: 'SET_PRODUCTS', payload: [] });
+  }, []);
+
+  /**
+   * Load normalized products from product_staging table.
+   * These are products that have been processed through bulk search operations.
+   */
+  const loadStagingProducts = useCallback(async (limit: number = 100, offset: number = 0) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await getStagingProducts(limit, offset);
+      const now = new Date().toISOString();
+
+      // Convert staging products to NormalizedProduct format
+      const normalizedProducts: NormalizedProduct[] = response.products.map((p: StagingProduct) => ({
+        // Core identifiers
+        id: p.id || p.sku,
+        partNumber: p.sku || p.id || '',
+        sku: p.sku,
+
+        // Names and descriptions
+        name: p.boeing_name || p.title || p.sku || '',
+        title: p.title || p.boeing_name || p.sku || '',
+        description: p.boeing_description || p.body_html || '',
+
+        // Manufacturer/vendor
+        manufacturer: p.supplier_name || p.vendor || '',
+        vendor: p.vendor,
+        supplier_name: p.supplier_name,
+
+        // Dimensions
+        length: p.dim_length,
+        width: p.dim_width,
+        height: p.dim_height,
+        dim_length: p.dim_length,
+        dim_width: p.dim_width,
+        dim_height: p.dim_height,
+        dimensionUom: p.dim_uom || '',
+        dim_uom: p.dim_uom,
+
+        // Weight
+        weight: p.weight,
+        weightUnit: p.weight_unit || '',
+        weight_uom: p.weight_unit,
+
+        // Pricing
+        price: p.cost_per_item ?? p.net_price ?? p.price ?? null,
+        cost_per_item: p.cost_per_item,
+        net_price: p.net_price,
+        list_price: p.list_price,
+        currency: p.currency ?? 'USD',
+
+        // Inventory
+        inventory: p.inventory_quantity,
+        inventory_quantity: p.inventory_quantity,
+        availability: p.inventory_status,
+        inventory_status: p.inventory_status,
+
+        // Status
+        status: (p.status as ProductStatus) || 'fetched',
+        lastModified: p.updated_at || now,
+
+        // Additional fields
+        country_of_origin: p.country_of_origin,
+        base_uom: p.base_uom,
+        hazmat_code: p.hazmat_code,
+        faa_approval_code: p.faa_approval_code,
+        eccn: p.eccn,
+        schedule_b_code: p.schedule_b_code,
+        condition: p.condition,
+        pma: p.pma,
+
+        // Images
+        product_image: p.boeing_image_url || p.image_url,
+        thumbnail_image: p.boeing_thumbnail_url,
+
+        // Distribution source
+        distrSrc: 'BDI',
+        pnAUrl: '',
+
+        // Raw Boeing data now fetched separately via /api/products/raw-data endpoint
+        rawBoeingData: {},
+      }));
+
+      dispatch({ type: 'SET_PRODUCTS', payload: normalizedProducts });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load staging products');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   return {
     products,
     selectedProduct,
@@ -155,8 +270,10 @@ export function useProducts(): UseProductsReturn {
     actionLoading,
     selectProduct,
     fetchProducts,
+    loadStagingProducts,
     updateProduct,
     publishProduct,
     clearError,
+    clearProducts,
   };
 }
