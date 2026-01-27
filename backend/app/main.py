@@ -43,7 +43,6 @@ app.include_router(build_zap_router(zap_service))
 app.include_router(bulk_router)
 app.include_router(build_products_router(store))
 
-
 @app.get("/health")
 async def health_check():
     """Basic health check endpoint."""
