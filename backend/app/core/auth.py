@@ -1,158 +1,129 @@
 """
-Authentication module for Boeing Data Hub.
+Authentication Module for Boeing Data Hub
 
-Provides simple session-based authentication with:
-- Token generation and validation
-- User session management
-- FastAPI dependency for protected routes
+Uses AWS Cognito for authentication via SSO from Aviation Gateway.
+Supabase is used only for data operations, not authentication.
 """
-
-import base64
-import time
 import logging
-from typing import Optional
+from typing import Optional, List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError
+from app.core.cognito import verify_cognito_token, extract_user_info
 
 logger = logging.getLogger(__name__)
+security = HTTPBearer()
 
-# Security scheme for Bearer token
-security = HTTPBearer(auto_error=False)
-
-# Session timeout in seconds (24 hours)
-SESSION_TIMEOUT = 24 * 60 * 60
-
-# In-memory session store (for simple implementation)
-# In production, consider using Redis for distributed sessions
-active_sessions: dict[str, dict] = {}
-
-def generate_session_token(user_id: str, username: str) -> str:
-    """
-    Generate a session token for authenticated user.
-
-    Token format: base64(user_id:username:expiry_timestamp)
-    """
-    expiry = int(time.time()) + SESSION_TIMEOUT
-    token_data = f"{user_id}:{username}:{expiry}"
-    token = base64.b64encode(token_data.encode()).decode()
-
-    # Store session
-    active_sessions[token] = {
-        "user_id": user_id,
-        "username": username,
-        "expiry": expiry,
-        "created_at": int(time.time())
-    }
-
-    logger.info(f"Session created for user {username} (expires in 24h)")
-    return token
-
-def validate_session_token(token: str) -> Optional[dict]:
-    """
-    Validate a session token and return user info if valid.
-
-    Returns None if token is invalid or expired.
-    """
-    try:
-        # Check if token exists in active sessions
-        if token in active_sessions:
-            session = active_sessions[token]
-
-            # Check expiry
-            if session["expiry"] > int(time.time()):
-                return {
-                    "user_id": session["user_id"],
-                    "username": session["username"]
-                }
-            else:
-                # Token expired, remove from sessions
-                del active_sessions[token]
-                logger.info(f"Session expired for user {session['username']}")
-                return None
-
-        # Try to decode token (for cases where server restarted)
-        decoded = base64.b64decode(token.encode()).decode()
-        parts = decoded.split(":")
-
-        if len(parts) != 3:
-            return None
-
-        user_id, username, expiry_str = parts
-        expiry = int(expiry_str)
-
-        # Check if token is still valid
-        if expiry > int(time.time()):
-            # Re-add to active sessions
-            active_sessions[token] = {
-                "user_id": user_id,
-                "username": username,
-                "expiry": expiry,
-                "created_at": int(time.time())
-            }
-            return {"user_id": user_id, "username": username}
-
-        return None
-
-    except Exception as e:
-        logger.warning(f"Token validation failed: {e}")
-        return None
-
-def invalidate_session(token: str) -> bool:
-    """
-    Invalidate a session token (logout).
-
-    Returns True if session was found and removed.
-    """
-    if token in active_sessions:
-        username = active_sessions[token].get("username", "unknown")
-        del active_sessions[token]
-        logger.info(f"Session invalidated for user {username}")
-        return True
-    return False
-
-def get_token_from_header(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
-) -> Optional[str]:
-    """Extract token from Authorization header."""
-    if credentials and credentials.scheme.lower() == "bearer":
-        return credentials.credentials
-    return None
 
 async def get_current_user(
-    token: Optional[str] = Depends(get_token_from_header)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict:
     """
-    FastAPI dependency to get the current authenticated user.
+    Validate Cognito JWT token and return user data.
 
-    Raises HTTPException 401 if not authenticated.
+    The token is passed from Aviation Gateway via SSO flow.
+    Token validation includes:
+    - Signature verification using Cognito JWKS
+    - Expiry check
+    - Issuer validation
+    - Token use validation (must be 'access')
     """
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
+    token = credentials.credentials
+
+    logger.debug("Validating Cognito authentication token")
+    try:
+        # Verify the token with Cognito JWKS
+        payload = await verify_cognito_token(token)
+
+        # Extract user info from claims
+        user_info = extract_user_info(payload)
+
+        user_id = user_info.get("id")
+        if not user_id:
+            logger.warning("Authentication failed - missing user ID in token")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "UNAUTHORIZED",
+                    "message": "Invalid token: missing user ID",
+                },
+            )
+
+        logger.debug(
+            f"Authentication successful - user_id: {user_id}, "
+            f"email: {user_info.get('email')}, "
+            f"groups: {user_info.get('groups')}"
         )
 
-    user = validate_session_token(token)
+        return {
+            "id": user_id,
+            "username": user_info.get("username"),
+            "email": user_info.get("email"),
+            "groups": user_info.get("groups", []),
+            "scope": user_info.get("scope", []),
+        }
 
-    if not user:
+    except JWTError as e:
+        logger.warning(f"Authentication failed - JWT error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired session",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail={
+                "code": "UNAUTHORIZED",
+                "message": f"Invalid or expired token: {str(e)}",
+            },
+        )
+    except Exception as e:
+        logger.error(f"Authentication failed - unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "UNAUTHORIZED",
+                "message": "Authentication failed",
+            },
         )
 
-    return user
 
-async def get_current_user_optional(
-    token: Optional[str] = Depends(get_token_from_header)
-) -> Optional[dict]:
+async def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+) -> dict | None:
     """
-    FastAPI dependency to optionally get the current user.
-
-    Returns None if not authenticated (doesn't raise exception).
+    Optional authentication - returns None if no token provided.
     """
-    if not token:
+    if not credentials:
         return None
+    return await get_current_user(credentials)
 
-    return validate_session_token(token)
+
+def require_groups(required_groups: List[str]):
+    """
+    Dependency factory for requiring specific Cognito groups.
+
+    Usage:
+        @router.get("/admin-only")
+        async def admin_endpoint(user: dict = Depends(require_groups(["admin"]))):
+            ...
+    """
+    async def check_groups(user: dict = Depends(get_current_user)) -> dict:
+        user_groups = user.get("groups", [])
+
+        # Check if user has at least one of the required groups
+        if not any(group in user_groups for group in required_groups):
+            logger.warning(
+                f"Access denied - user {user.get('id')} lacks required groups. "
+                f"Has: {user_groups}, Needs one of: {required_groups}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "FORBIDDEN",
+                    "message": f"Access denied. Required groups: {required_groups}",
+                },
+            )
+
+        return user
+
+    return check_groups
+
+
+# Pre-configured dependencies for common group requirements
+require_admin = require_groups(["admin"])
