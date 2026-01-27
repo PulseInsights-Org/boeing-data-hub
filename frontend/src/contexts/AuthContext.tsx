@@ -1,139 +1,258 @@
 /**
- * Authentication Context for Boeing Data Hub.
+ * Auth Context for Boeing Data Hub
  *
- * Provides authentication state and actions to the entire application.
- * Handles:
- * - Login/logout
- * - Session persistence
- * - Auth state management
+ * Handles SSO token received from Aviation Gateway via URL fragment.
+ * Token is extracted on app load and stored in sessionStorage.
+ *
+ * Supports federated Single Sign-Out (SLO) by:
+ * 1. Embedding a hidden iframe to Aviation Gateway's /logout-listener
+ * 2. Listening for logout events via postMessage
+ * 3. Automatically logging out when Aviation Gateway broadcasts logout
  */
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { User, LoginCredentials, AuthState } from '@/types/auth';
-import {
-  login as authLogin,
-  logout as authLogout,
-  getStoredUser,
-  getStoredToken,
-  isAuthenticated as checkIsAuthenticated,
-} from '@/services/authService';
-
-/**
- * Auth context value interface.
- */
-interface AuthContextValue extends AuthState {
-  login: (credentials: LoginCredentials) => Promise<void>;
-  logout: () => Promise<void>;
+interface User {
+  id: string;
+  email: string;
+  groups: string[];
 }
 
-// Create context with undefined default
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+interface AuthContextType {
+  user: User | null;
+  token: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  logout: () => void;
+  getAuthHeader: () => Record<string, string>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const AVIATION_GATEWAY_URL = import.meta.env.VITE_AVIATION_GATEWAY_URL || 'http://localhost:8080';
+const TOKEN_STORAGE_KEY = 'boeing_data_hub_sso_token';
+const LOGOUT_LISTENER_URL = `${AVIATION_GATEWAY_URL}/logout-listener`;
+const LOGOUT_EVENT_TYPE = 'AVIATION_GATEWAY_LOGOUT';
 
 /**
- * Auth provider props.
+ * Parse JWT token to extract payload (without verification)
+ * Verification is done server-side
  */
+function parseJwt(token: string): Record<string, unknown> | null {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if token is expired
+ */
+function isTokenExpired(token: string): boolean {
+  const payload = parseJwt(token);
+  if (!payload || typeof payload.exp !== 'number') {
+    return true;
+  }
+  // Add 30 second buffer for network latency
+  return Date.now() >= (payload.exp * 1000) - 30000;
+}
+
+/**
+ * Extract user info from Cognito JWT token
+ */
+function extractUserFromToken(token: string): User | null {
+  const payload = parseJwt(token);
+  if (!payload) return null;
+
+  return {
+    id: payload.sub as string,
+    email: payload.email as string || '',
+    groups: (payload['cognito:groups'] as string[]) || [],
+  };
+}
+
 interface AuthProviderProps {
   children: ReactNode;
 }
 
-/**
- * Authentication Provider Component.
- * Wraps the application to provide auth state and actions.
- */
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [state, setState] = useState<AuthState>({
-    user: null,
-    token: null,
-    isAuthenticated: false,
-    isLoading: true,
-  });
+export function AuthProvider({ children }: AuthProviderProps) {
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const logoutIframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  // Initialize auth state from localStorage on mount
+  /**
+   * Extract token from URL fragment (SSO flow from Aviation Gateway)
+   */
+  const extractTokenFromFragment = useCallback(() => {
+    const hash = window.location.hash;
+    if (!hash) return null;
+
+    const params = new URLSearchParams(hash.substring(1));
+    const accessToken = params.get('access_token');
+
+    if (accessToken) {
+      // Clear the fragment from URL immediately for security
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      return accessToken;
+    }
+    return null;
+  }, []);
+
+  /**
+   * Redirect to Aviation Gateway for authentication
+   */
+  const redirectToLogin = useCallback(() => {
+    const currentUrl = window.location.href.split('#')[0];
+    const loginUrl = `${AVIATION_GATEWAY_URL}/login?redirect=${encodeURIComponent(currentUrl)}`;
+    window.location.href = loginUrl;
+  }, []);
+
+  /**
+   * Initialize auth state on mount
+   */
   useEffect(() => {
-    const initializeAuth = () => {
-      const token = getStoredToken();
-      const user = getStoredUser();
+    const initAuth = () => {
+      // First, check for token in URL fragment (SSO redirect)
+      const fragmentToken = extractTokenFromFragment();
 
-      if (token && user) {
-        setState({
-          user,
-          token,
-          isAuthenticated: true,
-          isLoading: false,
-        });
+      if (fragmentToken) {
+        if (!isTokenExpired(fragmentToken)) {
+          sessionStorage.setItem(TOKEN_STORAGE_KEY, fragmentToken);
+          setToken(fragmentToken);
+          setUser(extractUserFromToken(fragmentToken));
+        } else {
+          console.warn('SSO token expired, redirecting to login');
+          redirectToLogin();
+          return;
+        }
       } else {
-        setState({
-          user: null,
-          token: null,
-          isAuthenticated: false,
-          isLoading: false,
-        });
+        // Check for existing token in sessionStorage
+        const storedToken = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+        if (storedToken && !isTokenExpired(storedToken)) {
+          setToken(storedToken);
+          setUser(extractUserFromToken(storedToken));
+        } else if (storedToken) {
+          // Token expired, clear and redirect
+          sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+          redirectToLogin();
+          return;
+        } else {
+          // No token at all, redirect to Aviation Gateway
+          redirectToLogin();
+          return;
+        }
+      }
+
+      setIsLoading(false);
+    };
+
+    initAuth();
+  }, [extractTokenFromFragment, redirectToLogin]);
+
+  /**
+   * Handle federated logout from Aviation Gateway
+   * This is called when we receive a logout event via postMessage
+   */
+  const handleFederatedLogout = useCallback(() => {
+    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    setToken(null);
+    setUser(null);
+    // Redirect to Aviation Gateway login page
+    redirectToLogin();
+  }, [redirectToLogin]);
+
+  /**
+   * Set up Single Sign-Out (SLO) listener
+   * Embeds a hidden iframe to Aviation Gateway's logout-listener page
+   * and listens for logout events via postMessage
+   */
+  useEffect(() => {
+    // Only set up SLO if user is authenticated
+    if (!token) return;
+
+    // Create hidden iframe for logout listener
+    const iframe = document.createElement('iframe');
+    iframe.src = LOGOUT_LISTENER_URL;
+    iframe.style.display = 'none';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.setAttribute('tabindex', '-1');
+    document.body.appendChild(iframe);
+    logoutIframeRef.current = iframe;
+
+    // Listen for logout events from the iframe
+    const handleMessage = (event: MessageEvent) => {
+      // SECURITY: Validate origin - must be from Aviation Gateway
+      if (event.origin !== AVIATION_GATEWAY_URL) {
+        return;
+      }
+
+      // Check if this is a logout event
+      if (event.data?.type === LOGOUT_EVENT_TYPE && event.data?.source === 'aviation-gateway') {
+        console.log('Received federated logout event from Aviation Gateway');
+        handleFederatedLogout();
       }
     };
 
-    initializeAuth();
+    window.addEventListener('message', handleMessage);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      if (logoutIframeRef.current && document.body.contains(logoutIframeRef.current)) {
+        document.body.removeChild(logoutIframeRef.current);
+      }
+      logoutIframeRef.current = null;
+    };
+  }, [token, handleFederatedLogout]);
+
+  /**
+   * Logout - clear token and redirect to Aviation Gateway
+   */
+  const logout = useCallback(() => {
+    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    setToken(null);
+    setUser(null);
+    window.location.href = AVIATION_GATEWAY_URL;
   }, []);
 
   /**
-   * Login with credentials.
+   * Get Authorization header for API requests
    */
-  const login = useCallback(async (credentials: LoginCredentials): Promise<void> => {
-    setState(prev => ({ ...prev, isLoading: true }));
+  const getAuthHeader = useCallback((): Record<string, string> => {
+    if (!token) return {};
+    return { Authorization: `Bearer ${token}` };
+  }, [token]);
 
-    try {
-      const response = await authLogin(credentials);
-
-      setState({
-        user: { user_id: response.user_id, username: response.username },
-        token: response.token,
-        isAuthenticated: true,
-        isLoading: false,
-      });
-    } catch (error) {
-      setState(prev => ({ ...prev, isLoading: false }));
-      throw error;
-    }
-  }, []);
-
-  /**
-   * Logout and clear auth state.
-   */
-  const logout = useCallback(async (): Promise<void> => {
-    setState(prev => ({ ...prev, isLoading: true }));
-
-    try {
-      await authLogout();
-    } finally {
-      setState({
-        user: null,
-        token: null,
-        isAuthenticated: false,
-        isLoading: false,
-      });
-    }
-  }, []);
-
-  const value: AuthContextValue = {
-    ...state,
-    login,
+  const value: AuthContextType = {
+    user,
+    token,
+    isAuthenticated: !!token && !!user,
+    isLoading,
     logout,
+    getAuthHeader,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
+}
 
-/**
- * Hook to access authentication context.
- * Must be used within an AuthProvider.
- */
-export const useAuth = (): AuthContextValue => {
+export function useAuth(): AuthContextType {
   const context = useContext(AuthContext);
-
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
-
   return context;
-};
+}
 
 export default AuthContext;

@@ -1,5 +1,7 @@
 import json
 import os
+from typing import Optional
+from functools import lru_cache
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -9,6 +11,21 @@ load_dotenv()
 
 
 class Settings(BaseModel):
+    # AWS Cognito settings (for SSO authentication from Aviation Gateway)
+    cognito_region: str = os.getenv("COGNITO_REGION", "us-east-1")
+    cognito_user_pool_id: Optional[str] = os.getenv("COGNITO_USER_POOL_ID")
+    cognito_app_client_id: Optional[str] = os.getenv("COGNITO_APP_CLIENT_ID")
+
+    @property
+    def cognito_issuer(self) -> str:
+        """Get the Cognito issuer URL."""
+        return f"https://cognito-idp.{self.cognito_region}.amazonaws.com/{self.cognito_user_pool_id}"
+
+    @property
+    def cognito_jwks_url(self) -> str:
+        """Get the Cognito JWKS URL for token verification."""
+        return f"{self.cognito_issuer}/.well-known/jwks.json"
+
     # Supabase
     supabase_url: str | None = os.getenv("SUPABASE_URL")
     supabase_key: str | None = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -60,6 +77,12 @@ class Settings(BaseModel):
     # Rate limits
     boeing_api_rate_limit: str = os.getenv("BOEING_API_RATE_LIMIT", "20/m")
     shopify_api_rate_limit: str = os.getenv("SHOPIFY_API_RATE_LIMIT", "30/m")
+
+
+@lru_cache()
+def get_settings() -> Settings:
+    """Get cached settings instance."""
+    return Settings()
 
 
 settings = Settings()
