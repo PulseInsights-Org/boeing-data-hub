@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, ShoppingBag } from 'lucide-react';
+import { CloudDownload, ShoppingBag } from 'lucide-react';
 import { Header } from '@/components/dashboard/Header';
 import { EditProductModal } from '@/components/dashboard/EditProductModal';
 import { ErrorAlert } from '@/components/dashboard/ErrorAlert';
@@ -135,10 +135,10 @@ const Index = () => {
     // Products are managed in SearchPanel state
   };
 
-  // Bulk publish products from a batch
-  const handleBulkPublishBatch = async (_batchId: string, products: NormalizedProduct[]) => {
+  // Bulk publish products from a batch - returns the publish batch ID
+  const handleBulkPublishBatch = async (_batchId: string, products: NormalizedProduct[]): Promise<string | null> => {
     const unpublishedProducts = products.filter(p => p.status !== 'published');
-    if (unpublishedProducts.length === 0) return;
+    if (unpublishedProducts.length === 0) return null;
 
     const partNumbers = unpublishedProducts
       .map(p => p.partNumber || p.sku || p.id)
@@ -146,8 +146,10 @@ const Index = () => {
       .join(',');
 
     if (partNumbers) {
-      await startBulkPublishOperation(partNumbers);
+      const response = await startBulkPublishOperation(partNumbers);
+      return response?.batch_id || null;
     }
+    return null;
   };
 
   return (
@@ -173,8 +175,8 @@ const Index = () => {
                   : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
               )}
             >
-              <Search className="h-4 w-4" />
-              Search & Process
+              <CloudDownload className="h-4 w-4" />
+              Fetch & Process
             </button>
             <button
               onClick={() => setActiveTab('published')}

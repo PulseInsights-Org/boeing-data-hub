@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(npx tsc:*)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(findstr:*)",
+      "Bash(py -3.13 -m pip install python-jose[cryptography])",
+      "Bash(git fetch:*)"
+    ]
+  }
+}
