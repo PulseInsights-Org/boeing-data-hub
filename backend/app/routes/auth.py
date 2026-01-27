@@ -28,7 +28,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
     Token is obtained via SSO flow through Aviation Gateway.
     """
     return User(
-        user_id=current_user["id"],
+        user_id=current_user["user_id"],
         username=current_user.get("username"),
         email=current_user.get("email"),
         groups=current_user.get("groups", [])

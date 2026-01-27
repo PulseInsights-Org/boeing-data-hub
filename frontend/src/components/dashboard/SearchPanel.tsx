@@ -3,7 +3,7 @@ import { RealtimeChannel } from '@supabase/supabase-js';
 import {
   Loader2,
   Upload,
-  Search,
+  CloudDownload,
   X,
   CheckCircle2,
   AlertCircle,
@@ -38,7 +38,7 @@ interface SearchPanelProps {
   onSetStatusFilter: (status: string | null) => void;
   onLoadBatchProducts: (batchId: string) => Promise<NormalizedProduct[]>;
   onClearBatchProducts: () => void;
-  onBulkPublishBatch: (batchId: string, products: NormalizedProduct[]) => Promise<void>;
+  onBulkPublishBatch: (batchId: string, products: NormalizedProduct[]) => Promise<string | null>;
   onEditProduct: (product: NormalizedProduct) => void;
   onPublishProduct: (productId: string) => Promise<{ success: boolean; error?: string }>;
   actionLoading: { [key: string]: boolean };
@@ -75,6 +75,8 @@ export function SearchPanel({
   const [loadingBatches, setLoadingBatches] = useState<Set<string>>(new Set());
   const [publishingBatches, setPublishingBatches] = useState<Set<string>>(new Set());
   const [selectedProducts, setSelectedProducts] = useState<Record<string, NormalizedProduct | null>>({});
+  // Track which search batch is linked to which publish batch
+  const [linkedPublishBatches, setLinkedPublishBatches] = useState<Record<string, string>>({});
 
   // Realtime subscription reference for product_staging updates
   const stagingChannelRef = useRef<RealtimeChannel | null>(null);
@@ -183,10 +185,14 @@ export function SearchPanel({
 
     setPublishingBatches(prev => new Set(prev).add(batchId));
     try {
-      await onBulkPublishBatch(batchId, products);
+      const publishBatchId = await onBulkPublishBatch(batchId, products);
+
+      // Link the search batch to the publish batch so we can show progress inline
+      if (publishBatchId) {
+        setLinkedPublishBatches(prev => ({ ...prev, [batchId]: publishBatchId }));
+      }
 
       // After publishing starts, wait a moment then refresh products to show updated status
-      // The actual status updates will come via the useEffect when publish batch completes
       setTimeout(async () => {
         try {
           const updatedProducts = await onLoadBatchProducts(batchId);
@@ -269,12 +275,12 @@ export function SearchPanel({
         <div className="max-w-4xl">
           <div className="flex items-center gap-3 mb-4">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-              <Search className="h-4 w-4 text-primary" />
+              <CloudDownload className="h-4 w-4 text-primary" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-foreground">Search Parts</h2>
+              <h2 className="text-base font-semibold text-foreground">Fetch Parts</h2>
               <p className="text-xs text-muted-foreground">
-                Enter part numbers to search and fetch from Boeing Commerce Connect
+                Enter part numbers to fetch product data from Boeing
               </p>
             </div>
           </div>
@@ -297,10 +303,10 @@ export function SearchPanel({
             </div>
           )}
 
-          {/* Search Input */}
+          {/* Fetch Input */}
           <div className="flex gap-3">
             <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <CloudDownload className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Enter part numbers (comma, semicolon, or space separated)"
                 value={partNumbersText}
@@ -323,8 +329,8 @@ export function SearchPanel({
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <>
-                  <Search className="h-4 w-4 mr-2" />
-                  Search
+                  <CloudDownload className="h-4 w-4 mr-2" />
+                  Fetch
                 </>
               )}
             </Button>
@@ -343,7 +349,7 @@ export function SearchPanel({
           {/* Section Header */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-medium text-foreground">Recent Searches</h3>
+              <h3 className="text-sm font-medium text-foreground">Recent Requests</h3>
               {activeBatchesCount > 0 && (
                 <span className="bg-primary text-primary-foreground text-xs px-2 py-0.5 rounded-full font-medium">
                   {activeBatchesCount} active
@@ -361,42 +367,45 @@ export function SearchPanel({
             </Button>
           </div>
 
-          {/* Status Filter Tabs */}
-          <div className="flex items-center gap-1 mb-4 p-1 bg-muted rounded-lg w-fit">
-            {STATUS_FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                onClick={() => onSetStatusFilter(filter.value === 'all' ? null : filter.value)}
-                className={cn(
-                  "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
-                  (statusFilter === filter.value || (filter.value === 'all' && !statusFilter))
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {filter.label}
-              </button>
-            ))}
-          </div>
+          {/* Status Filter Tabs and Pipeline Legend - Same Row */}
+          <div className="flex items-center justify-between mb-4">
+            {/* Status Filter Tabs */}
+            <div className="flex items-center gap-1 p-1 bg-muted rounded-lg w-fit">
+              {STATUS_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  onClick={() => onSetStatusFilter(filter.value === 'all' ? null : filter.value)}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                    (statusFilter === filter.value || (filter.value === 'all' && !statusFilter))
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
 
-          {/* Pipeline Legend */}
-          <div className="flex items-center gap-4 text-xs text-muted-foreground mb-4">
-            <span className="font-medium">Pipeline stages:</span>
-            <div className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-slate-400" />
-              <span>Extracted</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-amber-400" />
-              <span>Normalized</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              <span>Published</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-red-500" />
-              <span>Failed</span>
+            {/* Pipeline Legend */}
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span className="font-medium">Pipeline stages:</span>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-slate-400" />
+                <span>Extracted</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                <span>Normalized</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span>Published</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-red-500" />
+                <span>Failed</span>
+              </div>
             </div>
           </div>
 
@@ -406,20 +415,35 @@ export function SearchPanel({
               <div className="rounded-full bg-muted p-4 mb-4">
                 <Package className="h-8 w-8 text-muted-foreground" />
               </div>
-              <h3 className="text-base font-medium text-foreground mb-1">No searches yet</h3>
+              <h3 className="text-base font-medium text-foreground mb-1">No requests yet</h3>
               <p className="text-sm text-muted-foreground max-w-sm">
-                Enter part numbers above to search and fetch product data from Boeing Commerce Connect.
+                Enter part numbers above to fetch product data from Boeing.
               </p>
             </div>
           )}
 
           {/* Batch Cards */}
           <div className="space-y-3">
-            {activeBatches.slice(0, 10).map(batch => {
+            {activeBatches
+              // Filter out publish batches that are linked to search batches (they show inline)
+              .filter(batch => {
+                // Keep all search batches
+                if (batch.batch_type === 'search') return true;
+                // Only keep publish batches that are NOT linked to any search batch
+                const linkedPublishIds = Object.values(linkedPublishBatches);
+                return !linkedPublishIds.includes(batch.id);
+              })
+              .slice(0, 10)
+              .map(batch => {
               const hasProducts = batchProducts[batch.id] && batchProducts[batch.id].length > 0;
               const unpublishedCount = hasProducts
                 ? batchProducts[batch.id].filter(p => p.status !== 'published').length
                 : 0;
+              // Get linked publish batch for this search batch (if any)
+              const linkedPublishBatchId = linkedPublishBatches[batch.id];
+              const linkedPublishBatch = linkedPublishBatchId
+                ? activeBatches.find(b => b.id === linkedPublishBatchId)
+                : null;
 
               return (
                 <div
@@ -506,51 +530,122 @@ export function SearchPanel({
                         {batch.progress_percent.toFixed(0)}%
                       </span>
                     </div>
+
+                    {/* Inline Publish Progress - shown when a publish batch is linked to this search batch */}
+                    {linkedPublishBatch && (
+                      <div className="mt-3 pt-3 border-t border-border/50">
+                        <div className="flex items-center gap-2 mb-2">
+                          {linkedPublishBatch.status === 'processing' ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                          ) : linkedPublishBatch.status === 'completed' ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                          ) : linkedPublishBatch.status === 'failed' ? (
+                            <AlertCircle className="h-3.5 w-3.5 text-destructive" />
+                          ) : (
+                            <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                          )}
+                          <span className="text-xs font-medium text-foreground">Publishing to Shopify</span>
+                          <span className={cn(
+                            "text-xs px-2 py-0.5 rounded-full font-medium",
+                            getStatusBadgeClass(linkedPublishBatch.status)
+                          )}>
+                            {linkedPublishBatch.status}
+                          </span>
+                        </div>
+                        <Progress
+                          value={linkedPublishBatch.progress_percent}
+                          className={cn(
+                            "h-1.5 mb-2",
+                            linkedPublishBatch.status === 'completed' && "[&>div]:bg-emerald-500"
+                          )}
+                        />
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <div className="flex items-center gap-3">
+                            <span>Published: <span className="font-medium text-foreground">{linkedPublishBatch.published_count}</span></span>
+                            {linkedPublishBatch.failed_count > 0 && (
+                              <span className="text-destructive">
+                                Failed: <span className="font-medium">{linkedPublishBatch.failed_count}</span>
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-medium text-foreground">
+                            {linkedPublishBatch.progress_percent.toFixed(0)}%
+                          </span>
+                        </div>
+
+                        {/* Part Numbers in Publish Pipeline */}
+                        {linkedPublishBatch.part_numbers && linkedPublishBatch.part_numbers.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5 max-h-[80px] overflow-y-auto p-2 bg-background/50 rounded border border-border/50">
+                            {linkedPublishBatch.part_numbers.map((pn, idx) => {
+                              // Determine status of this part number in publish batch
+                              const isFailed = linkedPublishBatch.failed_items?.some(f => f.part_number === pn);
+                              const isPublished = linkedPublishBatch.status === 'completed' && !isFailed;
+                              const isProcessing = linkedPublishBatch.status === 'processing' && !isFailed;
+                              return (
+                                <span
+                                  key={idx}
+                                  className={cn(
+                                    "font-mono px-2 py-0.5 rounded text-xs",
+                                    isFailed
+                                      ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                      : isPublished
+                                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                        : isProcessing
+                                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                          : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                                  )}
+                                >
+                                  {pn}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Action Buttons for completed search batches */}
                   {batch.status === 'completed' && batch.batch_type === 'search' && batch.normalized_count > 0 && (
                     <div className="px-4 py-2 border-t border-border bg-muted/30 flex items-center gap-2">
+                      {/* Toggle button: Load Products / Hide */}
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleLoadBatchProducts(batch.id)}
+                        onClick={() => {
+                          if (hasProducts) {
+                            handleClearBatchProducts(batch.id);
+                          } else {
+                            handleLoadBatchProducts(batch.id);
+                          }
+                        }}
                         disabled={loadingBatches.has(batch.id)}
                         className="h-8 text-xs"
                       >
                         {loadingBatches.has(batch.id) ? (
                           <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                        ) : hasProducts ? (
+                          <ChevronUp className="h-3 w-3 mr-1.5" />
                         ) : (
                           <Download className="h-3 w-3 mr-1.5" />
                         )}
-                        Load Products ({batch.normalized_count})
+                        {hasProducts ? 'Hide' : `Load Products (${batch.normalized_count})`}
                       </Button>
                       {hasProducts && (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleClearBatchProducts(batch.id)}
-                            className="h-8 text-xs"
-                          >
-                            <ChevronUp className="h-3 w-3 mr-1.5" />
-                            Hide
-                          </Button>
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => handleBulkPublishBatch(batch.id)}
-                            disabled={publishingBatches.has(batch.id) || unpublishedCount === 0}
-                            className="h-8 text-xs"
-                          >
-                            {publishingBatches.has(batch.id) ? (
-                              <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                            ) : (
-                              <Upload className="h-3 w-3 mr-1.5" />
-                            )}
-                            Publish All ({unpublishedCount})
-                          </Button>
-                        </>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => handleBulkPublishBatch(batch.id)}
+                          disabled={publishingBatches.has(batch.id) || unpublishedCount === 0}
+                          className="h-8 text-xs"
+                        >
+                          {publishingBatches.has(batch.id) ? (
+                            <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                          ) : (
+                            <Upload className="h-3 w-3 mr-1.5" />
+                          )}
+                          Publish All ({unpublishedCount})
+                        </Button>
                       )}
                     </div>
                   )}
@@ -583,7 +678,7 @@ export function SearchPanel({
                           <div className="flex items-center gap-2 mb-2">
                             <Package className="h-3.5 w-3.5 text-muted-foreground" />
                             <span className="font-medium text-foreground">
-                              Part Numbers in Pipeline ({batch.part_numbers.length})
+                              Part Numbers in Extraction Pipeline ({batch.part_numbers.length})
                             </span>
                           </div>
                           <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto p-2 bg-background rounded border">

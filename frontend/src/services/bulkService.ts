@@ -16,7 +16,7 @@ import {
   BatchStatusResponse,
   BatchListResponse,
 } from '@/types/product';
-import { getAuthHeaders } from '@/services/authService';
+import { getAuthHeaders, handleUnauthorized } from '@/services/authService';
 
 // Base URL for backend API (FastAPI). Configure via Vite env.
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -41,6 +41,10 @@ export const startBulkSearch = async (
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new Error('Session expired. Redirecting to login...');
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `Bulk search failed: ${response.status}`);
   }
@@ -68,6 +72,10 @@ export const startBulkPublish = async (
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new Error('Session expired. Redirecting to login...');
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `Bulk publish failed: ${response.status}`);
   }
@@ -90,6 +98,10 @@ export const getBatchStatus = async (batchId: string): Promise<BatchStatusRespon
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new Error('Session expired. Redirecting to login...');
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `Failed to get batch status: ${response.status}`);
   }
@@ -121,6 +133,11 @@ export const listBatches = async (
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      // Don't redirect here - let the caller handle it to avoid infinite loops
+      // The AuthContext will handle token expiration
+      throw new Error('Unauthorized');
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `Failed to list batches: ${response.status}`);
   }
@@ -143,6 +160,10 @@ export const cancelBatch = async (batchId: string): Promise<{ message: string; b
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new Error('Session expired. Redirecting to login...');
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `Failed to cancel batch: ${response.status}`);
   }
@@ -253,6 +274,10 @@ export const getStagingProducts = async (
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new Error('Session expired. Redirecting to login...');
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `Failed to fetch staging products: ${response.status}`);
   }
@@ -286,6 +311,10 @@ export const getRawBoeingData = async (partNumber: string): Promise<RawBoeingDat
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new Error('Session expired. Redirecting to login...');
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `Failed to fetch raw data: ${response.status}`);
   }

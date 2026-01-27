@@ -56,7 +56,7 @@ async def get_current_user(
         )
 
         return {
-            "id": user_id,
+            "user_id": user_id,
             "username": user_info.get("username"),
             "email": user_info.get("email"),
             "groups": user_info.get("groups", []),
@@ -109,7 +109,7 @@ def require_groups(required_groups: List[str]):
         # Check if user has at least one of the required groups
         if not any(group in user_groups for group in required_groups):
             logger.warning(
-                f"Access denied - user {user.get('id')} lacks required groups. "
+                f"Access denied - user {user.get('user_id')} lacks required groups. "
                 f"Has: {user_groups}, Needs one of: {required_groups}"
             )
             raise HTTPException(

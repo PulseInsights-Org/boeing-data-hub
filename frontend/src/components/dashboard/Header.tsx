@@ -1,4 +1,4 @@
-import { Plane, Database, LogOut } from 'lucide-react';
+import { Plane, LogOut } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,11 +27,6 @@ export function Header() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Database className="h-4 w-4" />
-            <span>Boeing Commerce Connect</span>
-          </div>
-
           {/* Logout button */}
           <Tooltip>
             <TooltipTrigger asChild>

@@ -198,6 +198,23 @@ export function useBulkOperations(): UseBulkOperationsReturn {
     refreshBatches();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll for updates when there are active batches (fallback for realtime)
+  useEffect(() => {
+    const hasActiveBatches = activeBatches.some(
+      b => b.status === 'pending' || b.status === 'processing'
+    );
+
+    if (!hasActiveBatches) return;
+
+    // Poll every 3 seconds when there are active batches
+    const pollInterval = setInterval(() => {
+      console.log('[useBulkOperations] Polling for batch updates...');
+      refreshBatches();
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, [activeBatches, refreshBatches]);
+
   const clearError = useCallback(() => {
     setError(null);
   }, []);

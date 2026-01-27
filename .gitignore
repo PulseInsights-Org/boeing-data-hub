@@ -34,3 +34,6 @@ logs/
 coverage/
 .coverage
 htmlcov/
+
+backend/.env
+frontend/.env.local
