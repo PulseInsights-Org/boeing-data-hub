@@ -93,15 +93,15 @@ class ShopifyClient:
     async def _set_product_category(self, product_id: int) -> None:
         """Set product category to 'Aircraft Parts & Accessories' using GraphQL.
 
-        Uses hardcoded category ID to avoid multiple API calls for taxonomy lookup.
+        Uses the category ID field directly as per Shopify's ProductInput specification.
         The category ID 'gid://shopify/TaxonomyCategory/vp-1-1' corresponds to:
         Vehicles & Parts > Vehicle Parts & Accessories > Aircraft Parts & Accessories
 
-        Note: productCategory in ProductInput requires API version 2024-10+.
-        If using an older API version, this will fail silently.
+        Note: category field in ProductInput requires API version 2024-10+.
         """
-        # Hardcoded category ID for "Aircraft Parts & Accessories"
-        # This avoids 3-4 GraphQL calls to traverse the taxonomy hierarchy
+        # Category ID for "Aircraft Parts & Accessories"
+        # Full path: Vehicles & Parts > Vehicle Parts & Accessories > Aircraft Parts & Accessories
+        # See: https://shopify.github.io/product-taxonomy/
         category_gid = "gid://shopify/TaxonomyCategory/vp-1-1"
 
         mutation = """
@@ -109,23 +109,20 @@ class ShopifyClient:
                 productUpdate(input: $input) {
                     product {
                         id
-                        productCategory {
-                            productTaxonomyNode {
-                                id
-                                name
-                            }
+                        category {
+                            id
+                            name
+                            fullName
                         }
                     }
-                    userErrors { field message }
+                    userErrors { field message code }
                 }
             }
         """
         variables = {
             "input": {
                 "id": self._to_gid("Product", product_id),
-                "productCategory": {
-                    "productTaxonomyNodeId": category_gid,
-                },
+                "category": category_gid,
             }
         }
 
@@ -135,7 +132,7 @@ class ShopifyClient:
             if errors:
                 logger.info("shopify category set failed product_id=%s errors=%s", product_id, errors)
             else:
-                category = (result.get("data") or {}).get("productUpdate", {}).get("product", {}).get("productCategory")
+                category = (result.get("data") or {}).get("productUpdate", {}).get("product", {}).get("category")
                 logger.info("shopify category set success product_id=%s category=%s", product_id, category)
         except HTTPException as exc:
             logger.info("shopify category set error product_id=%s detail=%s", product_id, exc.detail)
