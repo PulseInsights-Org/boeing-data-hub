@@ -17,6 +17,7 @@ interface UsePublishedProductsReturn {
   refresh: () => Promise<void>;
   loadMore: () => Promise<void>;
   hasMore: boolean;
+  shopifyStoreDomain: string | null;
 }
 
 const PAGE_SIZE = 50;
@@ -28,6 +29,7 @@ export function usePublishedProducts(): UsePublishedProductsReturn {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [offset, setOffset] = useState(0);
+  const [shopifyStoreDomain, setShopifyStoreDomain] = useState<string | null>(null);
 
   // Fetch products from backend API
   const fetchProducts = useCallback(async (reset: boolean = false) => {
@@ -46,6 +48,7 @@ export function usePublishedProducts(): UsePublishedProductsReturn {
         setOffset(prev => prev + PAGE_SIZE);
       }
       setTotal(response.total);
+      setShopifyStoreDomain(response.shopify_store_domain);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch products';
       setError(errorMessage);
@@ -93,5 +96,6 @@ export function usePublishedProducts(): UsePublishedProductsReturn {
     refresh,
     loadMore,
     hasMore: products.length < total,
+    shopifyStoreDomain,
   };
 }

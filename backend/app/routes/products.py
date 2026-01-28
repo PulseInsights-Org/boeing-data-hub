@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.db.supabase_store import SupabaseStore
 from app.core.auth import get_current_user
+from app.core.config import settings
 
 
 class PublishedProduct(BaseModel):
@@ -38,6 +39,7 @@ class PublishedProductsResponse(BaseModel):
     """Response for list of published products."""
     products: List[PublishedProduct]
     total: int
+    shopify_store_domain: Optional[str] = None
 
 
 def build_products_router(store: SupabaseStore) -> APIRouter:
@@ -79,9 +81,14 @@ def build_products_router(store: SupabaseStore) -> APIRouter:
             products = response.data or []
             total = response.count or 0
 
+            # Extract store name from domain (e.g., "zap-integration-test.myshopify.com" -> "zap-integration-test")
+            store_domain = settings.shopify_store_domain
+            store_name = store_domain.replace(".myshopify.com", "") if store_domain else None
+
             return PublishedProductsResponse(
                 products=[PublishedProduct(**p) for p in products],
-                total=total
+                total=total,
+                shopify_store_domain=store_name
             )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
