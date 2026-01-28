@@ -158,6 +158,39 @@ class BatchStore:
 
         logger.info(f"Updated batch {batch_id} status to {status}")
 
+    def update_batch_type(
+        self,
+        batch_id: str,
+        batch_type: str,
+        new_total_items: Optional[int] = None,
+        publish_part_numbers: Optional[List[str]] = None
+    ) -> None:
+        """
+        Update the batch type to reflect current pipeline stage.
+
+        Args:
+            batch_id: Batch identifier
+            batch_type: New batch type (e.g., 'search', 'normalized', 'publishing')
+            new_total_items: Optional new total items count (for when publishing fewer items than searched)
+            publish_part_numbers: Optional list of part numbers to publish (subset of original part_numbers)
+        """
+        update_data: Dict[str, Any] = {"batch_type": batch_type}
+
+        if new_total_items is not None:
+            update_data["total_items"] = new_total_items
+
+        if publish_part_numbers is not None:
+            update_data["publish_part_numbers"] = publish_part_numbers
+
+        self.client.table(self.table).update(update_data).eq("id", batch_id).execute()
+
+        log_msg = f"Updated batch {batch_id} type to {batch_type}"
+        if new_total_items is not None:
+            log_msg += f", total_items to {new_total_items}"
+        if publish_part_numbers is not None:
+            log_msg += f", publish_part_numbers count: {len(publish_part_numbers)}"
+        logger.info(log_msg)
+
     def increment_extracted(self, batch_id: str, count: int = 1) -> None:
         """
         Increment the extracted_count counter.

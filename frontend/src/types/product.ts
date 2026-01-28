@@ -1,4 +1,4 @@
-export type ProductStatus = 'fetched' | 'enriched' | 'published';
+export type ProductStatus = 'fetched' | 'enriched' | 'normalized' | 'published';
 
 export interface LocationAvailability {
   location: string | null;
@@ -80,6 +80,8 @@ export interface ShopifyPublishResponse {
   success: boolean;
   shopifyProductId?: string;
   error?: string;
+  batch_id?: string;
+  message?: string;
 }
 
 // ============================================
@@ -87,7 +89,7 @@ export interface ShopifyPublishResponse {
 // ============================================
 
 export type BatchStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
-export type BatchType = 'search' | 'publish';
+export type BatchType = 'search' | 'normalized' | 'publishing' | 'publish';
 
 export interface FailedItem {
   part_number: string;
@@ -106,7 +108,8 @@ export interface BatchStatusResponse {
   failed_count: number;
   progress_percent: number;
   failed_items?: FailedItem[];
-  part_numbers?: string[];  // List of part numbers being processed
+  part_numbers?: string[];  // Original part numbers from search/extraction
+  publish_part_numbers?: string[];  // Part numbers selected for publishing (subset of part_numbers)
   error_message?: string;
   idempotency_key?: string;
   created_at: string;
@@ -132,6 +135,7 @@ export interface BulkPublishRequest {
   part_numbers?: string[];
   part_numbers_text?: string;
   idempotency_key?: string;
+  batch_id?: string;  // If provided, uses existing batch instead of creating new one
 }
 
 export interface BatchListResponse {

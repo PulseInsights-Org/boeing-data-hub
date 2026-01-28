@@ -99,6 +99,7 @@ class BulkPublishRequest(BaseModel):
     Request to start a bulk publish operation.
 
     Same input options as BulkSearchRequest.
+    If batch_id is provided, uses that existing batch instead of creating a new one.
     """
     part_numbers: Optional[List[str]] = Field(
         None,
@@ -111,6 +112,10 @@ class BulkPublishRequest(BaseModel):
     idempotency_key: Optional[str] = Field(
         None,
         description="Client-generated UUID to prevent duplicate batch creation"
+    )
+    batch_id: Optional[str] = Field(
+        None,
+        description="Existing batch ID to use for publishing (continues the same pipeline)"
     )
 
     @model_validator(mode='before')
@@ -176,7 +181,8 @@ class BatchStatusResponse(BaseModel):
     failed_count: int
     progress_percent: float
     failed_items: Optional[List[FailedItem]] = None
-    part_numbers: Optional[List[str]] = None  # List of part numbers being processed
+    part_numbers: Optional[List[str]] = None  # Original part numbers from search/extraction
+    publish_part_numbers: Optional[List[str]] = None  # Part numbers selected for publishing
     error_message: Optional[str] = None
     idempotency_key: Optional[str] = None
     created_at: datetime
