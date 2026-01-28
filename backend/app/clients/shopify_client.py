@@ -115,7 +115,7 @@ class ShopifyClient:
                             fullName
                         }
                     }
-                    userErrors { field message code }
+                    userErrors { field message }
                 }
             }
         """
