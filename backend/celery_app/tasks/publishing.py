@@ -125,6 +125,20 @@ def publish_product(self, batch_id: str, part_number: str, user_id: str = "syste
         if not record:
             raise NonRetryableError(f"Product {part_number} not found in staging for user {user_id}")
 
+        # 2. Validate price and inventory - reject products with zero or missing values
+        price = record.get("price") or record.get("list_price") or record.get("net_price") or record.get("cost_per_item")
+        inventory = record.get("inventory_quantity")
+
+        if price is None or price == 0:
+            raise NonRetryableError(
+                f"Product {part_number} has no valid price (price=0 or missing). Cannot publish to Shopify."
+            )
+
+        if inventory is None or inventory == 0:
+            raise NonRetryableError(
+                f"Product {part_number} has no inventory (quantity=0 or missing). Cannot publish to Shopify."
+            )
+
         # Check if already published (has shopify_product_id)
         existing_shopify_id = record.get("shopify_product_id")
         if existing_shopify_id:
