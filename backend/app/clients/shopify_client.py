@@ -242,13 +242,121 @@ class ShopifyClient:
             raise HTTPException(status_code=502, detail=str(data.get("errors")))
         return data
 
-    def _build_metafields(self, product: Dict[str, Any]) -> list[Dict[str, Any]]:
-        """Build metafields using 'custom' namespace to match Shopify admin definitions.
+    def _map_unit_of_measure(self, uom: str) -> str:
+        """Map Boeing UOM values to Shopify allowed choices.
 
-        Only includes fields shown in the live store product metafields:
-        - Inventory location, Part number, Alternate part number, Unit of measure
-        - Condition, Cert, Trace, Manufacturer, Expiration date, PMA
-        - Estimated lead time (in days), Notes
+        Shopify custom.unit_of_measure is a Choice list with allowed values:
+        - EA, Inches, Pound, Pack (1PK = 25EA)
+
+        Returns empty string if no valid mapping found (field will be skipped).
+        """
+        if not uom:
+            return ""
+
+        uom_upper = uom.upper().strip()
+
+        # Direct mappings
+        if uom_upper in ("EA", "EACH"):
+            return "EA"
+        if uom_upper in ("IN", "INCH", "INCHES"):
+            return "Inches"
+        if uom_upper in ("LB", "LBS", "POUND", "POUNDS"):
+            return "Pound"
+        if uom_upper in ("PK", "PACK"):
+            return "Pack (1PK = 25EA)"
+
+        # Default to EA for common unit types
+        if uom_upper in ("PC", "PCS", "PIECE", "PIECES", "UNIT", "UNITS"):
+            return "EA"
+
+        # If no mapping found, skip this field to avoid validation errors
+        logger.info(f"shopify UOM not mapped, skipping: {uom}")
+        return ""
+
+    def _map_cert(self, cert: str) -> str:
+        """Map cert values to Shopify allowed choices.
+
+        Shopify custom.cert (tracedoc) is a Choice list with allowed values:
+        - EASA Form 1, FAA 8130-3, Brazil Form SEGV00 003, OEM Cert,
+        - 121 Trace, 129 Trace, 145 Trace, Transport Canada Form 1, C of C, CAA UK
+
+        Returns empty string if no valid mapping found (field will be skipped).
+        """
+        if not cert:
+            return ""
+
+        cert_upper = cert.upper().strip()
+
+        # Direct/partial mappings
+        if "8130" in cert_upper or "FAA" in cert_upper:
+            return "FAA 8130-3"
+        if "EASA" in cert_upper:
+            return "EASA Form 1"
+        if "BRAZIL" in cert_upper or "SEGV" in cert_upper:
+            return "Brazil Form SEGV00 003"
+        if "OEM" in cert_upper:
+            return "OEM Cert"
+        if "121" in cert_upper:
+            return "121 Trace"
+        if "129" in cert_upper:
+            return "129 Trace"
+        if "145" in cert_upper:
+            return "145 Trace"
+        if "CANADA" in cert_upper or "TRANSPORT" in cert_upper:
+            return "Transport Canada Form 1"
+        if "C OF C" in cert_upper or "COC" in cert_upper or "CERTIFICATE OF CONFORMANCE" in cert_upper:
+            return "C of C"
+        if "CAA" in cert_upper and "UK" in cert_upper:
+            return "CAA UK"
+
+        # Default to FAA 8130-3 for aerospace parts
+        return "FAA 8130-3"
+
+    def _validate_trace_url(self, trace: str) -> str:
+        """Validate trace URL against Shopify allowed domains.
+
+        Shopify custom.tracedoc (Link type) only allows:
+        - https://cdn.shopify.com/
+        - https://www.getsmartcert.com/
+
+        Returns empty string if URL doesn't match allowed domains.
+        """
+        if not trace:
+            return ""
+
+        trace = trace.strip()
+
+        # Check if URL matches allowed domains
+        allowed_domains = [
+            "https://cdn.shopify.com/",
+            "https://www.getsmartcert.com/",
+        ]
+
+        for domain in allowed_domains:
+            if trace.startswith(domain):
+                return trace
+
+        # URL not from allowed domain, skip to avoid validation error
+        logger.info(f"shopify trace URL not from allowed domain, skipping: {trace}")
+        return ""
+
+    def _build_metafields(self, product: Dict[str, Any]) -> list[Dict[str, Any]]:
+        """Build metafields using 'custom' namespace matching Shopify admin definitions.
+
+        Shopify Metafield Definitions and Validations:
+        - inventory_location: single_line_text_field (no validation)
+        - part_number: single_line_text_field (no validation)
+        - alternate_part_number: single_line_text_field (no validation)
+        - unit_of_measure: Choice list - EA, Inches, Pound, Pack (1PK = 25EA)
+        - condition: single_line_text_field (no validation)
+        - cert (tracedoc): Choice list - EASA Form 1, FAA 8130-3, Brazil Form SEGV00 003,
+                          OEM Cert, 121 Trace, 129 Trace, 145 Trace, Transport Canada Form 1, C of C, CAA UK
+        - trace: Link (url) - Limited to: cdn.shopify.com, getsmartcert.com
+        - manufacturer: single_line_text_field (no validation)
+        - expiration_date: date (YYYY-MM-DD format)
+        - pma: boolean (True or False)
+        - estimated_lead_time: number_integer
+        - notes: multi_line_text_field (no validation)
         """
         shopify_data = product.get("shopify") or {}
 
@@ -263,43 +371,102 @@ class ShopifyClient:
         alternate_part_number = title.split("=")[0] if "=" in title else title
 
         manufacturer = shopify_data.get("manufacturer") or product.get("manufacturer") or product.get("supplier_name") or ""
-        base_uom = shopify_data.get("unit_of_measure") or product.get("baseUOM") or product.get("base_uom") or ""
-        condition = product.get("condition") or "NE"
-        pma = product.get("pma")
-        lead_time = product.get("estimated_lead_time_days") or product.get("estimatedLeadTimeDays") or 3
         location_summary = shopify_data.get("location_summary") or product.get("location_summary") or ""
-        trace = shopify_data.get("trace") or product.get("trace") or ""
-        expiration_date = shopify_data.get("expiration_date") or product.get("expiration_date") or ""
+        condition = product.get("condition") or "NE"
         notes = shopify_data.get("notes") or product.get("notes") or ""
-        cert = shopify_data.get("cert") or product.get("cert") or "FAA 8130-3"
+        expiration_date = shopify_data.get("expiration_date") or product.get("expiration_date") or ""
 
-        # Only include fields that are shown in the live store product metafields
-        # Note: pma and estimated_lead_time are excluded as they cause Shopify validation issues
-        raw = [
+        # Map values to Shopify allowed choices
+        raw_uom = shopify_data.get("unit_of_measure") or product.get("baseUOM") or product.get("base_uom") or ""
+        unit_of_measure = self._map_unit_of_measure(raw_uom)
+
+        raw_cert = shopify_data.get("cert") or product.get("cert") or "FAA 8130-3"
+        cert = self._map_cert(raw_cert)
+
+        raw_trace = shopify_data.get("trace") or product.get("trace") or ""
+        trace = self._validate_trace_url(raw_trace)
+
+        # PMA: boolean type
+        pma = product.get("pma")
+        pma_value = "true" if pma else "false"
+
+        # Estimated lead time: integer
+        lead_time = product.get("estimated_lead_time_days") or product.get("estimatedLeadTimeDays") or 3
+
+        # Build metafields list - only include fields with valid values
+        metafields = []
+
+        # Fields with no validation constraints (always include if non-empty)
+        simple_fields = [
             ("inventory_location", location_summary, "single_line_text_field"),
             ("part_number", part_number, "single_line_text_field"),
             ("alternate_part_number", alternate_part_number, "single_line_text_field"),
-            ("unit_of_measure", base_uom, "single_line_text_field"),
             ("condition", condition, "single_line_text_field"),
-            ("cert", cert, "single_line_text_field"),
-            ("trace", trace, "url"),
             ("manufacturer", manufacturer, "single_line_text_field"),
-            ("expiration_date", expiration_date, "date"),
             ("notes", notes, "multi_line_text_field"),
         ]
 
-        metafields = []
-        for key, value, mtype in raw:
-            if str(value).strip() == "":
-                continue
-            metafields.append(
-                {
+        for key, value, mtype in simple_fields:
+            if str(value).strip():
+                metafields.append({
                     "namespace": "custom",
                     "key": key,
                     "value": str(value),
                     "type": mtype,
-                }
-            )
+                })
+
+        # Choice list fields - only include if mapped to valid choice
+        if unit_of_measure:
+            metafields.append({
+                "namespace": "custom",
+                "key": "unit_of_measure",
+                "value": unit_of_measure,
+                "type": "single_line_text_field",
+            })
+
+        if cert:
+            metafields.append({
+                "namespace": "custom",
+                "key": "cert",
+                "value": cert,
+                "type": "single_line_text_field",
+            })
+
+        # URL field - only include if from allowed domain
+        if trace:
+            metafields.append({
+                "namespace": "custom",
+                "key": "trace",
+                "value": trace,
+                "type": "url",
+            })
+
+        # Date field - only include if valid format
+        if expiration_date:
+            # Ensure date is in YYYY-MM-DD format
+            metafields.append({
+                "namespace": "custom",
+                "key": "expiration_date",
+                "value": str(expiration_date),
+                "type": "date",
+            })
+
+        # Boolean field - PMA
+        metafields.append({
+            "namespace": "custom",
+            "key": "pma",
+            "value": pma_value,
+            "type": "boolean",
+        })
+
+        # Integer field - Estimated lead time
+        metafields.append({
+            "namespace": "custom",
+            "key": "estimated_lead_time",
+            "value": str(int(lead_time)),
+            "type": "number_integer",
+        })
+
         return metafields
 
     def to_shopify_product_body(self, product: Dict[str, Any]) -> Dict[str, Any]:
