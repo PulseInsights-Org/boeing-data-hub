@@ -22,6 +22,7 @@ interface PublishedProductsPanelProps {
   error: string | null;
   searchQuery: string;
   hasMore: boolean;
+  shopifyStoreDomain: string | null;
   onSearchChange: (query: string) => void;
   onRefresh: () => Promise<void>;
   onLoadMore: () => Promise<void>;
@@ -34,6 +35,7 @@ export function PublishedProductsPanel({
   error,
   searchQuery,
   hasMore,
+  shopifyStoreDomain,
   onSearchChange,
   onRefresh,
   onLoadMore,
@@ -201,9 +203,9 @@ export function PublishedProductsPanel({
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          {product.shopify_product_id ? (
+                          {product.shopify_product_id && shopifyStoreDomain ? (
                             <a
-                              href={`https://admin.shopify.com/products/${product.shopify_product_id}`}
+                              href={`https://admin.shopify.com/store/${shopifyStoreDomain}/products/${product.shopify_product_id}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1 text-xs text-primary hover:underline"

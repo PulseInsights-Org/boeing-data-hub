@@ -833,6 +833,12 @@ class ShopifyClient:
         logger.info("shopify update payload id=%s payload=%s", shopify_product_id, body)
         data = await self._call_shopify("PUT", f"/products/{shopify_product_id}.json", json=body)
         shopify_product = data.get("product") or {}
+        product_id = shopify_product.get("id")
+
+        # Set product category using GraphQL (REST API doesn't support standardized categories)
+        if product_id:
+            await self._set_product_category(product_id)
+
         variants = shopify_product.get("variants") or []
         location_quantities = (product.get("shopify") or {}).get("location_quantities") or []
         if variants and location_quantities:

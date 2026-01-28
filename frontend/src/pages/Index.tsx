@@ -48,6 +48,7 @@ const Index = () => {
     refresh: refreshPublished,
     loadMore: loadMorePublished,
     hasMore: hasMorePublished,
+    shopifyStoreDomain,
   } = usePublishedProducts();
 
   const [editingProduct, setEditingProduct] = useState<NormalizedProduct | null>(null);
@@ -228,6 +229,7 @@ const Index = () => {
           error={publishedError}
           searchQuery={searchQuery}
           hasMore={hasMorePublished}
+          shopifyStoreDomain={shopifyStoreDomain}
           onSearchChange={setSearchQuery}
           onRefresh={refreshPublished}
           onLoadMore={loadMorePublished}
