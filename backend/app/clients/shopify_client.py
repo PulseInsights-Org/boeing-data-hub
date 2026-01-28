@@ -274,6 +274,7 @@ class ShopifyClient:
         cert = shopify_data.get("cert") or product.get("cert") or "FAA 8130-3"
 
         # Only include fields that are shown in the live store product metafields
+        # Note: pma and estimated_lead_time are excluded as they cause Shopify validation issues
         raw = [
             ("inventory_location", location_summary, "single_line_text_field"),
             ("part_number", part_number, "single_line_text_field"),
@@ -284,8 +285,6 @@ class ShopifyClient:
             ("trace", trace, "url"),
             ("manufacturer", manufacturer, "single_line_text_field"),
             ("expiration_date", expiration_date, "date"),
-            ("pma", str(pma).lower() if pma is not None else "", "boolean"),
-            ("estimated_lead_time", str(lead_time), "number_integer"),
             ("notes", notes, "multi_line_text_field"),
         ]
 
@@ -545,7 +544,7 @@ class ShopifyClient:
             {"namespace": "custom", "key": "schedule_b_code", "name": "Schedule B Code", "type": "single_line_text_field"},
             {"namespace": "custom", "key": "description", "name": "Description", "type": "single_line_text_field"},
             {"namespace": "custom", "key": "condition", "name": "Condition", "type": "single_line_text_field"},
-            {"namespace": "custom", "key": "pma", "name": "PMA", "type": "boolean"},
+            {"namespace": "custom", "key": "pma", "name": "PMA", "type": "single_line_text_field"},
             {"namespace": "custom", "key": "estimated_lead_time", "name": "Estimated lead time (in days)", "type": "number_integer"},
             {"namespace": "custom", "key": "cert", "name": "Cert", "type": "single_line_text_field"},
             {"namespace": "custom", "key": "inventory_location", "name": "Inventory location", "type": "single_line_text_field"},

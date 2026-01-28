@@ -404,7 +404,7 @@ export function SearchPanel({
               </div>
               <div className="flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-red-500" />
-                <span>Failed</span>
+                <span>No Stock</span>
               </div>
             </div>
           </div>
@@ -522,7 +522,7 @@ export function SearchPanel({
                         )}
                         {batch.failed_count > 0 && (
                           <span className="text-destructive">
-                            Failed: <span className="font-medium">{batch.failed_count}</span>
+                            No Stock: <span className="font-medium">{batch.failed_count}</span>
                           </span>
                         )}
                       </div>
@@ -564,7 +564,7 @@ export function SearchPanel({
                             <span>Published: <span className="font-medium text-foreground">{linkedPublishBatch.published_count}</span></span>
                             {linkedPublishBatch.failed_count > 0 && (
                               <span className="text-destructive">
-                                Failed: <span className="font-medium">{linkedPublishBatch.failed_count}</span>
+                                No Stock: <span className="font-medium">{linkedPublishBatch.failed_count}</span>
                               </span>
                             )}
                           </div>
@@ -585,7 +585,7 @@ export function SearchPanel({
                                 <span
                                   key={idx}
                                   className={cn(
-                                    "font-mono px-2 py-0.5 rounded text-xs",
+                                    "font-mono px-2 py-0.5 rounded text-xs flex items-center gap-1",
                                     isFailed
                                       ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
                                       : isPublished
@@ -596,9 +596,31 @@ export function SearchPanel({
                                   )}
                                 >
                                   {pn}
+                                  {isFailed && <span className="text-[10px] font-semibold">(No Stock)</span>}
                                 </span>
                               );
                             })}
+                          </div>
+                        )}
+
+                        {/* No Stock Items - show failed items directly */}
+                        {linkedPublishBatch.failed_items && linkedPublishBatch.failed_items.length > 0 && (
+                          <div className="mt-2 text-xs">
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <XCircle className="h-3 w-3 text-destructive" />
+                              <span className="font-medium text-destructive">No Stock Items:</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {linkedPublishBatch.failed_items.map((item, idx) => (
+                                <span
+                                  key={idx}
+                                  className="font-mono px-2 py-0.5 rounded text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                  title={item.error}
+                                >
+                                  {item.part_number}
+                                </span>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -720,13 +742,13 @@ export function SearchPanel({
                         </div>
                       )}
 
-                      {/* Failed Items - Enhanced Display */}
+                      {/* No Stock Items - Enhanced Display */}
                       {batch.failed_items && batch.failed_items.length > 0 && (
                         <div className="text-xs">
                           <div className="flex items-center gap-2 mb-2">
                             <XCircle className="h-3.5 w-3.5 text-destructive" />
                             <span className="font-medium text-destructive">
-                              Failed Items ({batch.failed_items.length})
+                              No Stock Items ({batch.failed_items.length})
                             </span>
                           </div>
                           <div className="bg-destructive/5 rounded border border-destructive/20 overflow-hidden">
