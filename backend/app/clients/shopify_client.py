@@ -14,6 +14,9 @@ class ShopifyClient:
         self._api_version = settings.shopify_api_version
         self._location_map = {}
         self._location_name_map = settings.shopify_location_map or {}
+        # Map Boeing location names to 3-char inventory location codes for metafield
+        # Example: {"Dallas Central": "1D1", "Chicago Warehouse": "CHI"}
+        self._inventory_location_codes = settings.shopify_inventory_location_codes or {}
 
     async def _get_location_map(self) -> Dict[str, int]:
         if self._location_map:
@@ -340,23 +343,73 @@ class ShopifyClient:
         logger.info(f"shopify trace URL not from allowed domain, skipping: {trace}")
         return ""
 
+    def _map_inventory_location(self, location: str, location_id: str = "") -> str:
+        """Map inventory location to exactly 3 characters.
+
+        Shopify custom.inventory_location has Character limit: Min 3, Max 3.
+        This field stores a location ID (e.g., "1D1"), not a location name.
+
+        Args:
+            location: Full location string like "Dallas Central: 106"
+            location_id: Optional pre-defined location ID (exactly 3 chars)
+
+        Returns:
+            3-character location ID or empty string if not available
+
+        Configuration:
+            Set SHOPIFY_INVENTORY_LOCATION_CODES env var as JSON:
+            {"Dallas Central": "1D1", "Chicago Warehouse": "CHI"}
+        """
+        # If a location_id is explicitly provided and valid, use it
+        if location_id and len(location_id.strip()) == 3:
+            return location_id.strip()
+
+        # If the location string itself is exactly 3 chars, it might be an ID
+        if location and len(location.strip()) == 3:
+            return location.strip()
+
+        # Try to map using the configured location codes
+        if location and self._inventory_location_codes:
+            # Extract just the location name (before the colon if present)
+            # e.g., "Dallas Central: 106" -> "Dallas Central"
+            location_name = location.split(":")[0].strip() if ":" in location else location.strip()
+
+            # Check for exact match
+            if location_name in self._inventory_location_codes:
+                code = self._inventory_location_codes[location_name]
+                if len(code) == 3:
+                    return code
+
+            # Check for partial match (case-insensitive)
+            location_upper = location_name.upper()
+            for name, code in self._inventory_location_codes.items():
+                if name.upper() in location_upper or location_upper in name.upper():
+                    if len(code) == 3:
+                        return code
+
+        # Cannot determine location ID - skip this field
+        if location:
+            logger.debug(f"shopify inventory_location skipped - no mapping for: {location}")
+        return ""
+
     def _build_metafields(self, product: Dict[str, Any]) -> list[Dict[str, Any]]:
         """Build metafields using 'custom' namespace matching Shopify admin definitions.
 
-        Shopify Metafield Definitions and Validations:
+        Shopify Metafield Definitions and Validations (from store):
         - inventory_location: single_line_text_field (no validation)
         - part_number: single_line_text_field (no validation)
         - alternate_part_number: single_line_text_field (no validation)
         - unit_of_measure: Choice list - EA, Inches, Pound, Pack (1PK = 25EA)
-        - condition: single_line_text_field (no validation)
-        - cert (tracedoc): Choice list - EASA Form 1, FAA 8130-3, Brazil Form SEGV00 003,
-                          OEM Cert, 121 Trace, 129 Trace, 145 Trace, Transport Canada Form 1, C of C, CAA UK
-        - trace: Link (url) - Limited to: cdn.shopify.com, getsmartcert.com
+        - condition: single_line_text_field (max 3 chars - NE, OH, SV, etc.)
+        - cert: Choice list - EASA Form 1, FAA 8130-3, etc.
+        - trace (tracedoc): Link (url) - Limited to: cdn.shopify.com, getsmartcert.com
         - manufacturer: single_line_text_field (no validation)
         - expiration_date: date (YYYY-MM-DD format)
         - pma: boolean (True or False)
         - estimated_lead_time: number_integer
         - notes: multi_line_text_field (no validation)
+
+        IMPORTANT: Some fields have strict validation. We skip fields that would fail validation.
         """
         shopify_data = product.get("shopify") or {}
 
@@ -371,37 +424,31 @@ class ShopifyClient:
         alternate_part_number = title.split("=")[0] if "=" in title else title
 
         manufacturer = shopify_data.get("manufacturer") or product.get("manufacturer") or product.get("supplier_name") or ""
-        location_summary = shopify_data.get("location_summary") or product.get("location_summary") or ""
-        condition = product.get("condition") or "NE"
         notes = shopify_data.get("notes") or product.get("notes") or ""
         expiration_date = shopify_data.get("expiration_date") or product.get("expiration_date") or ""
+
+        # Inventory location: Must be EXACTLY 3 characters (e.g., "1D1")
+        # The Shopify metafield has Min 3, Max 3 character limit
+        # This is a location ID, not a location name
+        raw_location = shopify_data.get("location_summary") or product.get("location_summary") or ""
+        location_id = shopify_data.get("location_id") or product.get("location_id") or ""
+        inventory_location = self._map_inventory_location(raw_location, location_id)
+
+        # Condition: Must be max 3 characters (NE, OH, SV, AR, etc.)
+        raw_condition = product.get("condition") or "NE"
+        condition = raw_condition[:2] if len(raw_condition) > 3 else raw_condition  # Truncate to 2 chars to be safe
 
         # Map values to Shopify allowed choices
         raw_uom = shopify_data.get("unit_of_measure") or product.get("baseUOM") or product.get("base_uom") or ""
         unit_of_measure = self._map_unit_of_measure(raw_uom)
-
-        raw_cert = shopify_data.get("cert") or product.get("cert") or "FAA 8130-3"
-        cert = self._map_cert(raw_cert)
-
-        raw_trace = shopify_data.get("trace") or product.get("trace") or ""
-        trace = self._validate_trace_url(raw_trace)
-
-        # PMA: boolean type
-        pma = product.get("pma")
-        pma_value = "true" if pma else "false"
-
-        # Estimated lead time: integer
-        lead_time = product.get("estimated_lead_time_days") or product.get("estimatedLeadTimeDays") or 3
 
         # Build metafields list - only include fields with valid values
         metafields = []
 
         # Fields with no validation constraints (always include if non-empty)
         simple_fields = [
-            ("inventory_location", location_summary, "single_line_text_field"),
             ("part_number", part_number, "single_line_text_field"),
             ("alternate_part_number", alternate_part_number, "single_line_text_field"),
-            ("condition", condition, "single_line_text_field"),
             ("manufacturer", manufacturer, "single_line_text_field"),
             ("notes", notes, "multi_line_text_field"),
         ]
@@ -415,7 +462,25 @@ class ShopifyClient:
                     "type": mtype,
                 })
 
-        # Choice list fields - only include if mapped to valid choice
+        # Inventory location: EXACTLY 3 characters required (Min 3, Max 3)
+        if inventory_location and len(inventory_location) == 3:
+            metafields.append({
+                "namespace": "custom",
+                "key": "inventory_location",
+                "value": inventory_location,
+                "type": "single_line_text_field",
+            })
+
+        # Condition: max 3 characters
+        if condition and len(condition) <= 3:
+            metafields.append({
+                "namespace": "custom",
+                "key": "condition",
+                "value": condition,
+                "type": "single_line_text_field",
+            })
+
+        # Unit of measure: Choice list field - only include if mapped to valid choice
         if unit_of_measure:
             metafields.append({
                 "namespace": "custom",
@@ -424,26 +489,32 @@ class ShopifyClient:
                 "type": "single_line_text_field",
             })
 
+        # Cert field: Choice list with key "trace" (not "cert")
+        # Valid values: EASA Form 1, FAA 8130-3, Brazil Form SEGV00 003, OEM Cert,
+        #               121 Trace, 129 Trace, 145 Trace, Transport Canada Form 1, C of C, CAA UK
+        raw_cert = shopify_data.get("cert") or product.get("cert") or "FAA 8130-3"
+        cert = self._map_cert(raw_cert)
         if cert:
             metafields.append({
                 "namespace": "custom",
-                "key": "cert",
+                "key": "trace",  # Note: Shopify key is 'trace' for the Cert field (custom.trace)
                 "value": cert,
                 "type": "single_line_text_field",
             })
 
-        # URL field - only include if from allowed domain
-        if trace:
+        # URL field (tracedoc) - only include if from allowed domain
+        raw_trace_url = shopify_data.get("trace") or product.get("trace") or ""
+        trace_url = self._validate_trace_url(raw_trace_url)
+        if trace_url:
             metafields.append({
                 "namespace": "custom",
-                "key": "trace",
-                "value": trace,
+                "key": "tracedoc",  # Note: key is 'tracedoc' for the URL/Link field
+                "value": trace_url,
                 "type": "url",
             })
 
         # Date field - only include if valid format
         if expiration_date:
-            # Ensure date is in YYYY-MM-DD format
             metafields.append({
                 "namespace": "custom",
                 "key": "expiration_date",
@@ -451,21 +522,8 @@ class ShopifyClient:
                 "type": "date",
             })
 
-        # Boolean field - PMA
-        metafields.append({
-            "namespace": "custom",
-            "key": "pma",
-            "value": pma_value,
-            "type": "boolean",
-        })
-
-        # Integer field - Estimated lead time
-        metafields.append({
-            "namespace": "custom",
-            "key": "estimated_lead_time",
-            "value": str(int(lead_time)),
-            "type": "number_integer",
-        })
+        # NOTE: PMA and estimated_lead_time removed - these also cause validation issues
+        # with the existing Shopify metafield definitions
 
         return metafields
 

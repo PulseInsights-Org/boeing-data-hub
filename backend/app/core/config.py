@@ -37,6 +37,9 @@ class Settings(BaseModel):
     shopify_admin_api_token: str | None = os.getenv("SHOPIFY_ADMIN_API_TOKEN")
     shopify_api_version: str = os.getenv("SHOPIFY_API_VERSION", "2024-10")
     shopify_location_map: dict[str, str] = json.loads(os.getenv("SHOPIFY_LOCATION_MAP", "{}"))
+    # Map Boeing location names to 3-char inventory location codes for Shopify metafield
+    # Example: {"Dallas Central": "1D1", "Chicago Warehouse": "CHI"}
+    shopify_inventory_location_codes: dict[str, str] = json.loads(os.getenv("SHOPIFY_INVENTORY_LOCATION_CODES", "{}"))
 
     # Boeing
     boeing_oauth_token_url: str = os.getenv(
