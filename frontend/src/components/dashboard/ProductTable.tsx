@@ -30,9 +30,10 @@ interface ProductTableProps {
   products: NormalizedProduct[];
   selectedProduct: NormalizedProduct | null;
   actionLoading: { [key: string]: boolean };
+  batchId?: string;  // Optional batch ID to pass when publishing individual products
   onSelectProduct: (product: NormalizedProduct | null) => void;
   onEditProduct: (product: NormalizedProduct) => void;
-  onPublishProduct: (productId: string) => Promise<{ success: boolean; error?: string }>;
+  onPublishProduct: (product: NormalizedProduct, batchId?: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 function formatDimensions(product: NormalizedProduct): string {
@@ -118,6 +119,7 @@ export function ProductTable({
   products,
   selectedProduct,
   actionLoading,
+  batchId,
   onSelectProduct,
   onEditProduct,
   onPublishProduct,
@@ -316,7 +318,7 @@ export function ProductTable({
                             disabled={!canPublish || isPublishing}
                             onClick={(e) => {
                               e.stopPropagation();
-                              onPublishProduct(product.id);
+                              onPublishProduct(product, batchId);
                             }}
                             title="Publish to Shopify"
                           >

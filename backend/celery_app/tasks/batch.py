@@ -22,11 +22,17 @@ logger = logging.getLogger(__name__)
 )
 def check_batch_completion(self, batch_id: str):
     """
-    Check if a batch has completed and update status.
+    Check if a batch has completed its current stage and update status.
 
-    A batch is complete when:
-    - Search batch: (normalized_count + failed_count) >= total_items
-    - Publish batch: (published_count + failed_count) >= total_items
+    Pipeline stages (single batch progresses through all):
+    1. "search" → extraction & normalization in progress
+    2. "normalized" → normalization complete, ready for publishing
+    3. "publishing" → publishing in progress
+    4. "completed" → all publishing done
+
+    A stage is complete when:
+    - Search stage: (normalized_count + failed_count) >= total_items → becomes "normalized"
+    - Publishing stage: (published_count + failed_count) >= total_items → becomes "completed"
 
     Args:
         batch_id: Batch identifier to check
@@ -55,50 +61,96 @@ def check_batch_completion(self, batch_id: str):
     normalized = batch["normalized_count"]
     published = batch["published_count"]
     failed = batch["failed_count"]
+    batch_type = batch["batch_type"]
 
-    is_complete = False
+    is_stage_complete = False
 
-    if batch["batch_type"] == "search":
-        is_complete = (normalized + failed) >= total
-    elif batch["batch_type"] == "publish":
-        is_complete = (published + failed) >= total
-
-    if is_complete:
-        # Determine final status based on success/failure ratio
-        succeeded = normalized if batch["batch_type"] == "search" else published
-
-        if failed == total:
-            # All items failed - mark as failed
-            final_status = "failed"
-            batch_store.update_status(batch_id, "failed", "All items failed during processing")
-            logger.warning(f"Batch {batch_id} marked as failed (all {total} items failed)")
-        elif failed > 0 and succeeded == 0:
-            # No successes at all - mark as failed
-            final_status = "failed"
-            batch_store.update_status(batch_id, "failed", f"All items failed ({failed} failures)")
-            logger.warning(f"Batch {batch_id} marked as failed ({failed} failures, 0 successes)")
-        elif failed > 0:
-            # Some items failed but some succeeded - mark as completed with warning
-            final_status = "completed"
-            batch_store.update_status(batch_id, "completed")
-            logger.warning(f"Batch {batch_id} completed with {failed} failures out of {total} items")
-        else:
-            # All items succeeded
-            final_status = "completed"
-            batch_store.update_status(batch_id, "completed")
-            logger.info(f"Batch {batch_id} marked as completed (all {total} items succeeded)")
-
+    # Check if current stage is complete based on batch_type
+    if batch_type == "search":
+        # Search stage: check if normalization is complete
+        is_stage_complete = (normalized + failed) >= total
+    elif batch_type == "publishing":
+        # Publishing stage: check if all items are published
+        is_stage_complete = (published + failed) >= total
+    elif batch_type == "normalized":
+        # Normalized stage: waiting for user to trigger publish
+        # This stage doesn't auto-complete
         return {
             "batch_id": batch_id,
-            "status": final_status,
-            "total": total,
-            "succeeded": succeeded,
-            "failed": failed
+            "status": "processing",
+            "batch_type": "normalized",
+            "message": "Normalization complete. Ready for publishing."
         }
+
+    if is_stage_complete:
+        if batch_type == "search":
+            # Search/normalization stage complete
+            # Check for complete failure
+            if normalized == 0:
+                batch_store.update_status(batch_id, "failed", "All items failed during extraction/normalization")
+                logger.warning(f"Batch {batch_id} failed (0 items normalized)")
+                return {
+                    "batch_id": batch_id,
+                    "status": "failed",
+                    "batch_type": "search",
+                    "total": total,
+                    "succeeded": 0,
+                    "failed": failed
+                }
+
+            # Transition to "normalized" stage (not "completed")
+            # User can then trigger publishing
+            batch_store.update_batch_type(batch_id, "normalized")
+            batch_store.update_status(batch_id, "completed")  # Status is completed for this stage
+            logger.info(f"Batch {batch_id} normalization complete ({normalized}/{total} items). Ready for publishing.")
+
+            return {
+                "batch_id": batch_id,
+                "status": "completed",
+                "batch_type": "normalized",
+                "total": total,
+                "succeeded": normalized,
+                "failed": failed
+            }
+
+        elif batch_type == "publishing":
+            # Publishing stage complete
+            succeeded = published
+
+            if failed == total or succeeded == 0:
+                # All items failed
+                batch_store.update_status(batch_id, "failed", f"Publishing failed ({failed} failures)")
+                logger.warning(f"Batch {batch_id} publishing failed ({failed} failures)")
+                return {
+                    "batch_id": batch_id,
+                    "status": "failed",
+                    "batch_type": "publishing",
+                    "total": total,
+                    "succeeded": succeeded,
+                    "failed": failed
+                }
+            elif failed > 0:
+                # Partial success
+                batch_store.update_status(batch_id, "completed")
+                logger.warning(f"Batch {batch_id} publishing completed with {failed} failures")
+            else:
+                # All succeeded
+                batch_store.update_status(batch_id, "completed")
+                logger.info(f"Batch {batch_id} publishing completed successfully ({succeeded} items)")
+
+            return {
+                "batch_id": batch_id,
+                "status": "completed",
+                "batch_type": "publishing",
+                "total": total,
+                "succeeded": succeeded,
+                "failed": failed
+            }
 
     return {
         "batch_id": batch_id,
         "status": "processing",
+        "batch_type": batch_type,
         "progress": {
             "total": total,
             "normalized": normalized,

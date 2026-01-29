@@ -15,6 +15,10 @@ const statusConfig: Record<ProductStatus, { label: string; className: string }> 
     label: 'Enriched',
     className: 'bg-warning/10 text-warning border-warning/30',
   },
+  normalized: {
+    label: 'Normalized',
+    className: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700',
+  },
   published: {
     label: 'Published',
     className: 'bg-success/10 text-success border-success/30',
@@ -37,6 +41,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
           'mr-1.5 h-1.5 w-1.5 rounded-full',
           status === 'fetched' && 'bg-muted-foreground',
           status === 'enriched' && 'bg-warning',
+          status === 'normalized' && 'bg-amber-500',
           status === 'published' && 'bg-success'
         )}
       />

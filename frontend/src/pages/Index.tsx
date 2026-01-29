@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { CloudDownload, ShoppingBag } from 'lucide-react';
 import { Header } from '@/components/dashboard/Header';
 import { EditProductModal } from '@/components/dashboard/EditProductModal';
@@ -10,18 +10,19 @@ import { useBulkOperations } from '@/hooks/useBulkOperations';
 import { usePublishedProducts } from '@/hooks/usePublishedProducts';
 import { NormalizedProduct, ProductStatus } from '@/types/product';
 import { getStagingProducts, StagingProduct } from '@/services/bulkService';
+import { publishToShopify } from '@/services/shopifyService';
 import { cn } from '@/lib/utils';
 
 type Tab = 'search' | 'published';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState<Tab>('search');
+  const [publishActionLoading, setPublishActionLoading] = useState<{ [key: string]: boolean }>({});
 
   const {
     error,
     actionLoading,
     updateProduct,
-    publishProduct,
     clearError,
   } = useProducts();
 
@@ -65,6 +66,23 @@ const Index = () => {
   const handleCloseModal = () => {
     setEditingProduct(null);
   };
+
+  // Handle individual product publish - takes product object directly
+  // batchId is optional - if provided, uses the existing batch instead of creating new one
+  const handlePublishProduct = useCallback(async (product: NormalizedProduct, batchId?: string): Promise<{ success: boolean; error?: string }> => {
+    const productId = product.id || product.partNumber || product.sku || '';
+    setPublishActionLoading(prev => ({ ...prev, [`publish-${productId}`]: true }));
+
+    try {
+      const result = await publishToShopify(product, batchId);
+      return result;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to publish';
+      return { success: false, error: errorMessage };
+    } finally {
+      setPublishActionLoading(prev => ({ ...prev, [`publish-${productId}`]: false }));
+    }
+  }, []);
 
   const handleBulkSearch = async (partNumbers: string) => {
     await startBulkSearchOperation(partNumbers);
@@ -136,18 +154,27 @@ const Index = () => {
     // Products are managed in SearchPanel state
   };
 
-  // Bulk publish products from a batch - returns the publish batch ID
-  const handleBulkPublishBatch = async (_batchId: string, products: NormalizedProduct[]): Promise<string | null> => {
-    const unpublishedProducts = products.filter(p => p.status !== 'published');
-    if (unpublishedProducts.length === 0) return null;
+  // Bulk publish products from a batch - uses the existing batch ID to continue the pipeline
+  // Only publishes products that have inventory > 0 and price > 0
+  const handleBulkPublishBatch = async (batchId: string, products: NormalizedProduct[]): Promise<string | null> => {
+    const publishableProducts = products.filter(p => {
+      if (p.status === 'published') return false;
+      const hasInventory = p.inventory !== null && p.inventory !== undefined && p.inventory > 0;
+      const hasPrice = (p.price !== null && p.price !== undefined && p.price > 0) ||
+                       (p.net_price !== null && p.net_price !== undefined && p.net_price > 0) ||
+                       (p.cost_per_item !== null && p.cost_per_item !== undefined && p.cost_per_item > 0);
+      return hasInventory && hasPrice;
+    });
+    if (publishableProducts.length === 0) return null;
 
-    const partNumbers = unpublishedProducts
+    const partNumbers = publishableProducts
       .map(p => p.partNumber || p.sku || p.id)
       .filter(Boolean)
       .join(',');
 
     if (partNumbers) {
-      const response = await startBulkPublishOperation(partNumbers);
+      // Pass the batchId to continue using the same batch record
+      const response = await startBulkPublishOperation(partNumbers, undefined, batchId);
       return response?.batch_id || null;
     }
     return null;
@@ -216,8 +243,8 @@ const Index = () => {
           onClearBatchProducts={handleClearBatchProducts}
           onBulkPublishBatch={handleBulkPublishBatch}
           onEditProduct={handleEditProduct}
-          onPublishProduct={publishProduct}
-          actionLoading={actionLoading}
+          onPublishProduct={handlePublishProduct}
+          actionLoading={{ ...actionLoading, ...publishActionLoading }}
         />
       )}
 

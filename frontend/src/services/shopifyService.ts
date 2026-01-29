@@ -16,8 +16,13 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 /**
  * Publish a normalized product to Shopify
+ * @param product - The product to publish
+ * @param batchId - Optional batch ID to use (continues existing batch pipeline)
  */
-export const publishToShopify = async (product: NormalizedProduct): Promise<ShopifyPublishResponse> => {
+export const publishToShopify = async (
+  product: NormalizedProduct,
+  batchId?: string
+): Promise<ShopifyPublishResponse> => {
   const partNumber = product.partNumber || product.sku;
   if (!partNumber) {
     return {
@@ -25,9 +30,14 @@ export const publishToShopify = async (product: NormalizedProduct): Promise<Shop
       error: 'Missing part number for Shopify publish.',
     };
   }
-  console.log(`[ShopifyService] Publishing product to Shopify: ${partNumber}`);
+  console.log(`[ShopifyService] Publishing product to Shopify: ${partNumber}${batchId ? ` (batch: ${batchId})` : ''}`);
 
   const url = new URL('/api/shopify/publish', API_BASE_URL || window.location.origin);
+
+  const payload: { part_number: string; batch_id?: string } = { part_number: partNumber };
+  if (batchId) {
+    payload.batch_id = batchId;
+  }
 
   const response = await fetch(url.toString(), {
     method: 'POST',
@@ -36,7 +46,7 @@ export const publishToShopify = async (product: NormalizedProduct): Promise<Shop
       Accept: 'application/json',
       ...getAuthHeaders(),
     },
-    body: JSON.stringify({ part_number: partNumber }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -49,6 +59,12 @@ export const publishToShopify = async (product: NormalizedProduct): Promise<Shop
   }
 
   const data = (await response.json()) as ShopifyPublishResponse;
+
+  // The publish is now queued via Celery worker - status updates come via realtime subscription
+  if (data.batch_id) {
+    console.log(`[ShopifyService] Publish queued for ${partNumber}, batch_id=${data.batch_id}`);
+  }
+
   return data;
 };
 

@@ -196,16 +196,6 @@ export function EditProductModal({
               </div>
             </div>
           </div>
-
-          {/* Raw Data Preview */}
-          <div className="space-y-2">
-            <Label className="text-muted-foreground">Raw Boeing Data (read-only)</Label>
-            <div className="bg-muted rounded-md p-3 max-h-32 overflow-y-auto">
-              <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">
-                {JSON.stringify(formData.rawBoeingData, null, 2)}
-              </pre>
-            </div>
-          </div>
         </form>
 
         <DialogFooter className="gap-2 sm:gap-0">
