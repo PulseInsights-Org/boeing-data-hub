@@ -100,12 +100,15 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
         # Certificate value for description
         cert = "FAA 8130-3"
 
-        # Build description as concatenation of Part No, Description (name), Cert, Condition
-        # Format: Part No. {part_number}\nDescription: {name}\nCert: {cert}\nCondition: {condition}
+        # Unit of measure
+        base_uom = item.get("baseUOM") or ""
+
+        # Build description as concatenation of Part No, Description (name), Cert, Condition, UoM
         body_html = f"""<p>Part No. {sku}</p>
 <p>Description: {name}</p>
 <p>Cert: {cert}</p>
-<p>Condition: {condition}</p>"""
+<p>Condition: {condition}</p>
+<p>Unit of Measure: {base_uom}</p>"""
 
         boeing_image_url = item.get("productImage")
         boeing_thumbnail_url = item.get("thumbnailImage")
