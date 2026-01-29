@@ -417,30 +417,67 @@ async def get_raw_boeing_data(
     user_id = current_user["user_id"]
     client = create_client(settings.supabase_url, settings.supabase_key)
 
+    # Helper to strip variant suffix (e.g., "WF338109=K3" -> "WF338109")
+    def strip_suffix(pn: str) -> str:
+        return pn.split("=")[0] if pn else ""
+
+    # Search part number (stripped for comparison)
+    search_pn_stripped = strip_suffix(part_number)
+
     try:
-        # Search for the part number in boeing_raw_data table
-        # The search_query field contains comma-separated part numbers
-        # Filter by user_id for user-specific data
+        # Step 1: Fetch recent records with only metadata (avoid large payload issues)
+        # The ilike filter with patterns like %2D... can cause URL encoding issues
+        # So we fetch recent records and filter in Python
         result = client.table("boeing_raw_data")\
-            .select("*")\
+            .select("id, search_query, created_at")\
             .eq("user_id", user_id)\
-            .ilike("search_query", f"%{part_number}%")\
             .order("created_at", desc=True)\
-            .limit(1)\
+            .limit(50)\
             .execute()
 
         if not result.data:
             return {"raw_data": None, "message": "No raw data found for this part number"}
 
-        raw_record = result.data[0]
-        raw_payload = raw_record.get("raw_payload", {})
+        # Step 2: Find matching record by checking search_query in Python
+        matching_record_id = None
+        matching_search_query = None
+        matching_created_at = None
 
-        # Extract the specific line item for this part number from the payload
+        for record in result.data:
+            search_query = record.get("search_query", "")
+            # Check if part number (exact or stripped) is in the search query
+            search_parts = [p.strip() for p in search_query.split(",")]
+            search_parts_stripped = [strip_suffix(p) for p in search_parts]
+
+            if part_number in search_parts or search_pn_stripped in search_parts_stripped:
+                matching_record_id = record.get("id")
+                matching_search_query = search_query
+                matching_created_at = record.get("created_at")
+                break
+
+        if not matching_record_id:
+            return {"raw_data": None, "message": "No raw data found for this part number"}
+
+        # Step 3: Fetch the full record with raw_payload by ID
+        full_result = client.table("boeing_raw_data")\
+            .select("raw_payload")\
+            .eq("id", matching_record_id)\
+            .single()\
+            .execute()
+
+        if not full_result.data:
+            return {"raw_data": None, "message": "Failed to fetch raw payload"}
+
+        raw_payload = full_result.data.get("raw_payload", {})
+
+        # Step 4: Extract the specific line item for this part number
         line_items = raw_payload.get("lineItems", [])
         matching_item = None
 
         for item in line_items:
-            if item.get("aviallPartNumber") == part_number:
+            aviall_pn = item.get("aviallPartNumber") or ""
+            # Match either exact or stripped version
+            if aviall_pn == part_number or strip_suffix(aviall_pn) == search_pn_stripped:
                 matching_item = item
                 break
 
@@ -450,15 +487,15 @@ async def get_raw_boeing_data(
                     **matching_item,
                     "currency": raw_payload.get("currency")
                 },
-                "search_query": raw_record.get("search_query"),
-                "fetched_at": raw_record.get("created_at")
+                "search_query": matching_search_query,
+                "fetched_at": matching_created_at
             }
         else:
             # Return the full payload if specific item not found
             return {
                 "raw_data": raw_payload,
-                "search_query": raw_record.get("search_query"),
-                "fetched_at": raw_record.get("created_at")
+                "search_query": matching_search_query,
+                "fetched_at": matching_created_at
             }
 
     except Exception as e:

@@ -87,14 +87,25 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
         cost_per_item = list_price if list_price is not None else net_price
         base_price = list_price if list_price is not None else net_price
         price = base_price * 1.1 if base_price is not None else None
-        body_html = description.strip() or name
-        body_html = f"<p>{body_html}</p>" if body_html else ""
 
         supplier_name = item.get("supplierName") or ""
         manufacturer = supplier_name or "Boeing"
         pma = (item.get("faaApprovalCode") or "").upper() == "PMA"
         condition = "NE"
-        estimated_lead_time = 3
+        estimated_lead_time = 60
+
+        # SKU should be stripped of any suffix after = (e.g., "WF338109=K3" -> "WF338109")
+        sku = _strip_variant_suffix(part_number)
+
+        # Certificate value for description
+        cert = "FAA 8130-3"
+
+        # Build description as concatenation of Part No, Description (name), Cert, Condition
+        # Format: Part No. {part_number}\nDescription: {name}\nCert: {cert}\nCondition: {condition}
+        body_html = f"""<p>Part No. {sku}</p>
+<p>Description: {name}</p>
+<p>Cert: {cert}</p>
+<p>Condition: {condition}</p>"""
 
         boeing_image_url = item.get("productImage")
         boeing_thumbnail_url = item.get("thumbnailImage")
@@ -144,7 +155,7 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
                 "boeing_image_url": boeing_image_url,
                 "boeing_thumbnail_url": boeing_thumbnail_url,
                 "title": title,
-                "sku": part_number,
+                "sku": sku,
                 "vendor": "BDI",
                 "manufacturer": manufacturer,
                 "cost_per_item": cost_per_item,
@@ -158,10 +169,10 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
                 "dim_length": length,
                 "dim_width": width,
                 "dim_height": height,
-                "cert": "FAA 8130-3",
+                "cert": cert,
                 "shopify": {
                     "title": title,
-                    "sku": part_number,
+                    "sku": sku,
                     "description": name,
                     "body_html": body_html,
                     "vendor": "BDI",
@@ -183,7 +194,7 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
                     "location_summary": location_summary,
                     "product_image": item.get("productImage"),
                     "thumbnail_image": item.get("thumbnailImage"),
-                    "cert": "FAA 8130-3",
+                    "cert": cert,
                     "condition": condition,
                     "pma": pma,
                     "estimated_lead_time_days": estimated_lead_time,

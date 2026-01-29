@@ -26,6 +26,12 @@ import { subscribeToAllStagingUpdates, unsubscribe } from '@/services/realtimeSe
 
 type StatusFilter = 'all' | 'active' | 'completed' | 'failed' | 'cancelled';
 
+// Helper function to strip variant suffix from part numbers (e.g., "WF338109=K3" -> "WF338109")
+const stripVariantSuffix = (partNumber: string): string => {
+  if (!partNumber) return '';
+  return partNumber.split('=')[0];
+};
+
 interface SearchPanelProps {
   activeBatches: BatchStatusResponse[];
   isStarting: boolean;
@@ -547,11 +553,6 @@ export function SearchPanel({
                         ) : (
                           <span>Published: <span className="font-medium text-foreground">{batch.published_count}</span></span>
                         )}
-                        {batch.failed_count > 0 && (
-                          <span className="text-destructive">
-                            No Stock: <span className="font-medium">{batch.failed_count}</span>
-                          </span>
-                        )}
                       </div>
                       <span className="font-medium text-foreground">
                         {batch.progress_percent.toFixed(0)}%
@@ -560,8 +561,8 @@ export function SearchPanel({
 
                   </div>
 
-                  {/* Action Buttons for completed search/normalized batches */}
-                  {batch.status === 'completed' && ['search', 'normalized'].includes(batch.batch_type) && batch.normalized_count > 0 && (
+                  {/* Action Buttons - visible throughout pipeline (search, normalized, publishing) */}
+                  {(batch.normalized_count > 0 || batch.batch_type === 'publishing') && (
                     <div className="px-4 py-2 border-t border-border bg-muted/30 flex items-center gap-2">
                       {/* Toggle button: Load Products / Hide */}
                       <Button
@@ -586,7 +587,8 @@ export function SearchPanel({
                         )}
                         {hasProducts ? 'Hide' : `Load Products (${batch.normalized_count})`}
                       </Button>
-                      {hasProducts && (
+                      {/* Only show Publish All button for completed search/normalized batches, not during publishing */}
+                      {hasProducts && batch.status === 'completed' && ['search', 'normalized'].includes(batch.batch_type) && (
                         <Button
                           variant="default"
                           size="sm"
@@ -632,8 +634,10 @@ export function SearchPanel({
                       {/* Pipeline Summary Cards */}
                       {(() => {
                         // Calculate not queued count (extracted but not in publish queue)
+                        // Strip variant suffix before comparing (e.g., "WF338109=K3" -> "WF338109")
+                        const publishedStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
                         const notQueuedCount = batch.part_numbers && batch.publish_part_numbers
-                          ? batch.part_numbers.filter(pn => !batch.publish_part_numbers?.includes(pn)).length
+                          ? batch.part_numbers.filter(pn => !publishedStripped.includes(stripVariantSuffix(pn))).length
                           : 0;
                         return (
                           <div className="grid grid-cols-4 gap-3">
@@ -703,10 +707,14 @@ export function SearchPanel({
                           </div>
                           <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border">
                             {batch.part_numbers.map((pn, idx) => {
-                              const isPublished = batch.publish_part_numbers?.includes(pn) &&
-                                !batch.failed_items?.some(f => f.part_number === pn);
-                              const isFailed = batch.failed_items?.some(f => f.part_number === pn);
-                              const isQueued = batch.publish_part_numbers?.includes(pn);
+                              // Strip variant suffix for comparison (e.g., "WF338109=K3" -> "WF338109")
+                              const pnStripped = stripVariantSuffix(pn);
+                              const publishStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
+                              const failedStripped = batch.failed_items?.map(f => stripVariantSuffix(f.part_number)) || [];
+                              const isPublished = publishStripped.includes(pnStripped) &&
+                                !failedStripped.includes(pnStripped);
+                              const isFailed = failedStripped.includes(pnStripped);
+                              const isQueued = publishStripped.includes(pnStripped);
                               return (
                                 <span
                                   key={idx}
@@ -730,20 +738,37 @@ export function SearchPanel({
                         </div>
                       )}
 
-                      {/* Published Part Numbers Section */}
+                      {/* Published/Publishing Part Numbers Section */}
                       {batch.publish_part_numbers && batch.publish_part_numbers.length > 0 && (
                         <div className="text-xs">
                           <div className="flex items-center gap-2 mb-2">
-                            <Upload className="h-3.5 w-3.5 text-emerald-500" />
+                            <Upload className={cn(
+                              "h-3.5 w-3.5",
+                              batch.batch_type === 'publishing' && batch.status === 'processing'
+                                ? "text-blue-500"
+                                : "text-emerald-500"
+                            )} />
                             <span className="font-medium text-foreground">
-                              Published to Shopify ({batch.publish_part_numbers.filter(pn =>
+                              {batch.batch_type === 'publishing' && batch.status === 'processing'
+                                ? 'Publishing to Shopify'
+                                : 'Published to Shopify'
+                              } ({batch.publish_part_numbers.filter(pn =>
                                 !batch.failed_items?.some(f => f.part_number === pn)
                               ).length} of {batch.publish_part_numbers.length})
+                              {batch.batch_type === 'publishing' && batch.status === 'processing' && (
+                                <Loader2 className="h-3 w-3 ml-1.5 inline animate-spin" />
+                              )}
                             </span>
                           </div>
-                          <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border border-emerald-200 dark:border-emerald-800">
+                          <div className={cn(
+                            "flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border",
+                            batch.batch_type === 'publishing' && batch.status === 'processing'
+                              ? "border-blue-200 dark:border-blue-800"
+                              : "border-emerald-200 dark:border-emerald-800"
+                          )}>
                             {batch.publish_part_numbers.map((pn, idx) => {
                               const isFailed = batch.failed_items?.some(f => f.part_number === pn);
+                              const isPublishing = batch.batch_type === 'publishing' && batch.status === 'processing';
                               return (
                                 <span
                                   key={idx}
@@ -751,9 +776,11 @@ export function SearchPanel({
                                     "font-mono px-2 py-0.5 rounded text-xs",
                                     isFailed
                                       ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 line-through"
-                                      : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                      : isPublishing
+                                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                        : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
                                   )}
-                                  title={isFailed ? 'Failed to publish' : 'Successfully published'}
+                                  title={isFailed ? 'Failed to publish' : isPublishing ? 'Publishing...' : 'Successfully published'}
                                 >
                                   {pn}
                                 </span>
@@ -765,8 +792,10 @@ export function SearchPanel({
 
                       {/* Not Published Section - Part numbers that were extracted but not queued for publishing */}
                       {batch.part_numbers && batch.publish_part_numbers && batch.batch_type === 'publishing' && (() => {
+                        // Strip variant suffix for comparison (e.g., "WF338109=K3" -> "WF338109")
+                        const publishStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
                         const notPublished = batch.part_numbers.filter(pn =>
-                          !batch.publish_part_numbers?.includes(pn)
+                          !publishStripped.includes(stripVariantSuffix(pn))
                         );
                         if (notPublished.length === 0) return null;
                         return (
