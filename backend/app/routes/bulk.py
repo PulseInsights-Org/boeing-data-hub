@@ -504,21 +504,35 @@ async def get_raw_boeing_data(
 
 
 def _calculate_progress(batch: dict) -> float:
-    """Calculate progress percentage based on batch type."""
-    total = batch["total_items"]
-    if total == 0:
-        return 0.0
+    """Calculate progress percentage based on batch type.
 
+    For search batches: progress = (normalized + failed) / total_items
+    For normalized batches: 100% (search complete, ready for publish)
+    For publishing batches: progress = (published + failed) / publish_count
+
+    Note: Publishing uses publish_part_numbers length as total since only
+    products with inventory/price are queued for publishing.
+    """
     batch_type = batch["batch_type"]
 
     if batch_type == "search":
         # Search stage: progress based on normalization
+        total = batch["total_items"]
+        if total == 0:
+            return 0.0
         completed = batch["normalized_count"] + batch["failed_count"]
+        return round((completed / total) * 100, 2)
+
     elif batch_type == "normalized":
         # Normalized stage: search is complete, show 100%
         return 100.0
-    else:  # publishing or publish
-        # Publishing stage: progress based on published items
-        completed = batch["published_count"] + batch["failed_count"]
 
-    return round((completed / total) * 100, 2)
+    else:  # publishing or publish
+        # Publishing stage: use publish_part_numbers count as total
+        # since only products with inventory/price are queued for publishing
+        publish_part_numbers = batch.get("publish_part_numbers") or []
+        total = len(publish_part_numbers) if publish_part_numbers else batch["total_items"]
+        if total == 0:
+            return 0.0
+        completed = batch["published_count"] + batch["failed_count"]
+        return round((completed / total) * 100, 2)

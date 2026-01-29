@@ -99,14 +99,35 @@ export function SearchPanel({
         );
 
         if (productIndex >= 0) {
-          // Update the product with new status
+          // Merge ALL updated fields from the realtime event, not just status
           const updatedProducts = [...products];
           updatedProducts[productIndex] = {
             ...updatedProducts[productIndex],
+            // Merge all fields from the updated product
+            ...(updatedProduct.title && { title: updatedProduct.title }),
+            ...(updatedProduct.sku && { sku: updatedProduct.sku }),
+            ...(updatedProduct.price !== undefined && { price: updatedProduct.price }),
+            ...(updatedProduct.net_price !== undefined && { net_price: updatedProduct.net_price }),
+            ...(updatedProduct.cost_per_item !== undefined && { cost_per_item: updatedProduct.cost_per_item }),
+            ...(updatedProduct.inventory_quantity !== undefined && { inventory: updatedProduct.inventory_quantity }),
+            ...(updatedProduct.weight !== undefined && { weight: updatedProduct.weight }),
+            ...(updatedProduct.body_html && { body_html: updatedProduct.body_html }),
+            ...(updatedProduct.vendor && { vendor: updatedProduct.vendor }),
+            ...(updatedProduct.condition && { condition: updatedProduct.condition }),
+            ...(updatedProduct.base_uom && { base_uom: updatedProduct.base_uom }),
+            ...(updatedProduct.supplier_name && { supplier_name: updatedProduct.supplier_name }),
+            ...(updatedProduct.country_of_origin && { country_of_origin: updatedProduct.country_of_origin }),
+            ...(updatedProduct.dim_length !== undefined && { dim_length: updatedProduct.dim_length }),
+            ...(updatedProduct.dim_width !== undefined && { dim_width: updatedProduct.dim_width }),
+            ...(updatedProduct.dim_height !== undefined && { dim_height: updatedProduct.dim_height }),
+            ...(updatedProduct.dim_uom && { dim_uom: updatedProduct.dim_uom }),
+            ...(updatedProduct.notes && { notes: updatedProduct.notes }),
+            // Always update status if present
             status: (updatedProduct.status as ProductStatus) || updatedProducts[productIndex].status,
           };
           newBatchProducts[batchId] = updatedProducts;
           updated = true;
+          console.log('[SearchPanel] Product updated via realtime:', updatedProduct.sku, updatedProduct);
         }
       });
 
@@ -271,7 +292,7 @@ export function SearchPanel({
         case 'search':
           return 'Fetched';
         case 'normalized':
-          return 'Ready to Publish';
+          return 'Normalized -> Ready to Publish';
         case 'publishing':
           return 'Published';
         case 'publish':
@@ -286,7 +307,7 @@ export function SearchPanel({
       case 'search':
         return 'Fetching';
       case 'normalized':
-        return 'Ready to Publish';
+        return 'Normalizing';
       case 'publishing':
         return 'Publishing';
       case 'publish':
@@ -636,7 +657,11 @@ export function SearchPanel({
                         // Calculate not queued count (extracted but not in publish queue)
                         // Strip variant suffix before comparing (e.g., "WF338109=K3" -> "WF338109")
                         const publishedStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
-                        const notQueuedCount = batch.part_numbers && batch.publish_part_numbers
+                        // Only show skipped count for publishing batches that have publish_part_numbers populated
+                        const notQueuedCount = batch.batch_type === 'publishing' &&
+                          batch.part_numbers &&
+                          batch.publish_part_numbers &&
+                          batch.publish_part_numbers.length > 0
                           ? batch.part_numbers.filter(pn => !publishedStripped.includes(stripVariantSuffix(pn))).length
                           : 0;
                         return (

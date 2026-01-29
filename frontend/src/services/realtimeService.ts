@@ -205,23 +205,33 @@ export function unsubscribe(channel: RealtimeChannel): void {
 
 /**
  * Transform a raw batch record to BatchStatusResponse format
+ *
+ * Progress calculation matches backend _calculate_progress:
+ * - 'search': (normalized_count + failed_count) / total
+ * - 'normalized': 100% (search is complete)
+ * - 'publishing' or 'publish': (published_count + failed_count) / total
  */
 function transformBatchRecord(record: any): BatchStatusResponse {
   const total = record.total_items || 0;
-  const processed = (record.extracted_count || 0) +
-                   (record.normalized_count || 0) +
-                   (record.published_count || 0) +
-                   (record.failed_count || 0);
 
-  // Calculate progress based on batch type
+  // Calculate progress based on batch type (matches backend logic)
   let progressPercent = 0;
   if (total > 0) {
-    if (record.batch_type === 'search') {
-      // Search: extracted + normalized
-      progressPercent = ((record.normalized_count || 0) / total) * 100;
-    } else if (record.batch_type === 'publish') {
-      // Publish: published + failed
-      progressPercent = (((record.published_count || 0) + (record.failed_count || 0)) / total) * 100;
+    const batchType = record.batch_type;
+
+    if (batchType === 'search') {
+      // Search stage: progress based on normalization
+      const completed = (record.normalized_count || 0) + (record.failed_count || 0);
+      progressPercent = (completed / total) * 100;
+    } else if (batchType === 'normalized') {
+      // Normalized stage: search is complete, show 100%
+      progressPercent = 100;
+    } else if (batchType === 'publishing' || batchType === 'publish') {
+      // Publishing stage: progress based on published items
+      // Use publish_part_numbers length as total if available, otherwise use total_items
+      const publishTotal = record.publish_part_numbers?.length || total;
+      const completed = (record.published_count || 0) + (record.failed_count || 0);
+      progressPercent = publishTotal > 0 ? (completed / publishTotal) * 100 : 0;
     }
   }
 
@@ -234,9 +244,10 @@ function transformBatchRecord(record: any): BatchStatusResponse {
     normalized_count: record.normalized_count || 0,
     published_count: record.published_count || 0,
     failed_count: record.failed_count || 0,
-    progress_percent: progressPercent,
+    progress_percent: Math.min(progressPercent, 100), // Cap at 100%
     failed_items: record.failed_items || [],
     part_numbers: record.part_numbers || [],
+    publish_part_numbers: record.publish_part_numbers || [],
     error_message: record.error_message,
     idempotency_key: record.idempotency_key,
     created_at: record.created_at,
