@@ -258,16 +258,25 @@ function transformBatchRecord(record: any): BatchStatusResponse {
 
 /**
  * Fetch published products from the product table
+ * Uses specific columns to reduce payload size and prevent worker timeouts
  */
 export async function fetchPublishedProducts(
   limit: number = 100,
   offset: number = 0,
   searchQuery?: string
 ): Promise<{ products: any[]; total: number }> {
+  // Select only needed columns to avoid large payloads that cause Cloudflare worker timeouts
+  const columns = [
+    'id', 'sku', 'title', 'body_html', 'vendor', 'price', 'cost_per_item', 'currency',
+    'inventory_quantity', 'weight', 'weight_unit', 'country_of_origin',
+    'dim_length', 'dim_width', 'dim_height', 'dim_uom',
+    'shopify_product_id', 'image_url', 'created_at', 'updated_at'
+  ].join(',');
+
   try {
     let query = supabase
       .from('product')
-      .select('*', { count: 'exact' });
+      .select(columns, { count: 'exact' });
 
     if (searchQuery && searchQuery.trim()) {
       // Search by sku (part number) using ilike for case-insensitive partial match

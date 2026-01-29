@@ -43,3 +43,4 @@ htmlcov/
 
 backend/.env
 frontend/.env.local
+.claude
