@@ -17,6 +17,7 @@ class ShopifyClient:
         # Map Boeing location names to 3-char inventory location codes for metafield
         # Example: {"Dallas Central": "1D1", "Chicago Warehouse": "CHI"}
         self._inventory_location_codes = settings.shopify_inventory_location_codes or {}
+        logger.info(f"ShopifyClient initialized with inventory_location_codes: {self._inventory_location_codes}")
 
     async def _get_location_map(self) -> Dict[str, int]:
         if self._location_map:
@@ -357,23 +358,32 @@ class ShopifyClient:
             Set SHOPIFY_INVENTORY_LOCATION_CODES env var as JSON:
             {"Dallas Central": "1D1", "Chicago Warehouse": "CHI"}
         """
+        logger.info(f"shopify _map_inventory_location called: location='{location}', location_id='{location_id}', codes={self._inventory_location_codes}")
+
         # If a location_id is explicitly provided and valid, use it
         if location_id and len(location_id.strip()) == 3:
+            logger.info(f"shopify inventory_location using provided location_id: {location_id.strip()}")
             return location_id.strip()
 
         # If the location string itself is exactly 3 chars, it might be an ID
         if location and len(location.strip()) == 3:
+            logger.info(f"shopify inventory_location using 3-char location string: {location.strip()}")
             return location.strip()
 
         # Try to map using the configured location codes
         if location and self._inventory_location_codes:
             # Extract just the location name (before the colon if present)
             # e.g., "Dallas Central: 106" -> "Dallas Central"
-            location_name = location.split(":")[0].strip() if ":" in location else location.strip()
+            # Handle multiple locations (semicolon-separated) - use the first one
+            first_location = location.split(";")[0].strip() if ";" in location else location
+            location_name = first_location.split(":")[0].strip() if ":" in first_location else first_location.strip()
+
+            logger.info(f"shopify inventory_location extracted name: '{location_name}' from '{location}'")
 
             # Check for exact match
             if location_name in self._inventory_location_codes:
                 code = self._inventory_location_codes[location_name]
+                logger.info(f"shopify inventory_location exact match found: '{location_name}' -> '{code}'")
                 if len(code) == 3:
                     return code
 
@@ -381,12 +391,13 @@ class ShopifyClient:
             location_upper = location_name.upper()
             for name, code in self._inventory_location_codes.items():
                 if name.upper() in location_upper or location_upper in name.upper():
+                    logger.info(f"shopify inventory_location partial match found: '{name}' -> '{code}'")
                     if len(code) == 3:
                         return code
 
         # Cannot determine location ID - skip this field
         if location:
-            logger.debug(f"shopify inventory_location skipped - no mapping for: {location}")
+            logger.info(f"shopify inventory_location skipped - no mapping for: '{location}', available codes: {self._inventory_location_codes}")
         return ""
 
     def _build_metafields(self, product: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -416,9 +427,9 @@ class ShopifyClient:
         # Part number: strip the =XX suffix (e.g., "4811-160-3=E9" -> "4811-160-3")
         part_number = raw_sku.split("=")[0] if "=" in raw_sku else raw_sku
 
-        # Alternate part number: same as part number (both without suffix)
+        # Alternate part number: should be blank (not pushed)
         title = shopify_data.get("title") or product.get("title") or ""
-        alternate_part_number = title.split("=")[0] if "=" in title else title
+        alternate_part_number = ""
 
         manufacturer = shopify_data.get("manufacturer") or product.get("manufacturer") or product.get("supplier_name") or ""
         notes = shopify_data.get("notes") or product.get("notes") or ""
@@ -519,8 +530,20 @@ class ShopifyClient:
                 "type": "date",
             })
 
-        # NOTE: PMA and estimated_lead_time removed - these also cause validation issues
-        # with the existing Shopify metafield definitions
+        # Estimated lead time (in days) - Integer field
+        estimated_lead_time = (
+            shopify_data.get("estimated_lead_time_days")
+            or product.get("estimated_lead_time_days")
+            or 60  # Default to 60 days
+        )
+        if estimated_lead_time is not None:
+            metafields.append({
+                "namespace": "custom",
+                "key": "estimated_lead_time",
+                "value": str(int(estimated_lead_time)),
+                "type": "number_integer",
+            })
+            logger.info(f"shopify estimated_lead_time added: {estimated_lead_time}")
 
         return metafields
 
@@ -633,7 +656,7 @@ class ShopifyClient:
                     {
                         "namespace": "boeing",
                         "key": "alternate_part_number",
-                        "value": title,
+                        "value": "",
                         "type": "single_line_text_field",
                     },
                     {
