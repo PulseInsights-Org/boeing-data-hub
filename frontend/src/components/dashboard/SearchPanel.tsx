@@ -736,10 +736,19 @@ export function SearchPanel({
                               const pnStripped = stripVariantSuffix(pn);
                               const publishStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
                               const failedStripped = batch.failed_items?.map(f => stripVariantSuffix(f.part_number)) || [];
-                              const isPublished = publishStripped.includes(pnStripped) &&
-                                !failedStripped.includes(pnStripped);
+
+                              // For publishing batches: ALL extracted parts should show green
+                              // because extraction and normalization are complete at that stage
+                              // Real-time status updates only affect the "Publishing to Shopify" section
+                              const isPublishingStage = batch.batch_type === 'publishing';
+
                               const isFailed = failedStripped.includes(pnStripped);
                               const isQueued = publishStripped.includes(pnStripped);
+
+                              // In publishing stage, all parts are "extracted/normalized" (green)
+                              // In search/normalized stage, show queued parts as blue
+                              const isExtracted = isPublishingStage || batch.batch_type === 'normalized';
+
                               return (
                                 <span
                                   key={idx}
@@ -747,13 +756,13 @@ export function SearchPanel({
                                     "font-mono px-2 py-0.5 rounded text-xs",
                                     isFailed
                                       ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                      : isPublished && batch.batch_type === 'publishing' && batch.status === 'completed'
+                                      : isExtracted
                                         ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
                                         : isQueued
                                           ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
                                           : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
                                   )}
-                                  title={isFailed ? 'Failed' : isPublished ? 'Published' : isQueued ? 'Queued for publishing' : 'Extracted'}
+                                  title={isFailed ? 'Failed' : isExtracted ? 'Extracted & Normalized' : isQueued ? 'Queued for publishing' : 'Fetched'}
                                 >
                                   {pn}
                                 </span>
@@ -764,7 +773,25 @@ export function SearchPanel({
                       )}
 
                       {/* Published/Publishing Part Numbers Section */}
-                      {batch.publish_part_numbers && batch.publish_part_numbers.length > 0 && (
+                      {batch.publish_part_numbers && batch.publish_part_numbers.length > 0 && (() => {
+                        // Get real-time product statuses from batchProducts
+                        const loadedProducts = batchProducts[batch.id] || [];
+                        const getProductStatus = (partNumber: string) => {
+                          const pnStripped = stripVariantSuffix(partNumber);
+                          const product = loadedProducts.find(p =>
+                            stripVariantSuffix(p.sku) === pnStripped || p.sku === partNumber
+                          );
+                          return product?.status;
+                        };
+
+                        // Count actually published items using real-time status
+                        const publishedCount = loadedProducts.length > 0
+                          ? batch.publish_part_numbers.filter(pn => getProductStatus(pn) === 'published').length
+                          : batch.publish_part_numbers.filter(pn =>
+                              !batch.failed_items?.some(f => f.part_number === pn)
+                            ).length;
+
+                        return (
                         <div className="text-xs">
                           <div className="flex items-center gap-2 mb-2">
                             <Upload className={cn(
@@ -777,9 +804,7 @@ export function SearchPanel({
                               {batch.batch_type === 'publishing' && batch.status === 'processing'
                                 ? 'Publishing to Shopify'
                                 : 'Published to Shopify'
-                              } ({batch.publish_part_numbers.filter(pn =>
-                                !batch.failed_items?.some(f => f.part_number === pn)
-                              ).length} of {batch.publish_part_numbers.length})
+                              } ({publishedCount} of {batch.publish_part_numbers.length})
                               {batch.batch_type === 'publishing' && batch.status === 'processing' && (
                                 <Loader2 className="h-3 w-3 ml-1.5 inline animate-spin" />
                               )}
@@ -793,7 +818,11 @@ export function SearchPanel({
                           )}>
                             {batch.publish_part_numbers.map((pn, idx) => {
                               const isFailed = batch.failed_items?.some(f => f.part_number === pn);
-                              const isPublishing = batch.batch_type === 'publishing' && batch.status === 'processing';
+                              // Use real-time product status if available
+                              const productStatus = getProductStatus(pn);
+                              const isPublishedRealtime = productStatus === 'published';
+                              const isPublishing = !isPublishedRealtime && !isFailed &&
+                                batch.batch_type === 'publishing' && batch.status === 'processing';
                               return (
                                 <span
                                   key={idx}
@@ -801,9 +830,11 @@ export function SearchPanel({
                                     "font-mono px-2 py-0.5 rounded text-xs",
                                     isFailed
                                       ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 line-through"
-                                      : isPublishing
-                                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                        : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                      : isPublishedRealtime
+                                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                        : isPublishing
+                                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
                                   )}
                                   title={isFailed ? 'Failed to publish' : isPublishing ? 'Publishing...' : 'Successfully published'}
                                 >
@@ -813,7 +844,8 @@ export function SearchPanel({
                             })}
                           </div>
                         </div>
-                      )}
+                        );
+                      })()}
 
                       {/* Not Published Section - Part numbers that were extracted but not queued for publishing */}
                       {batch.part_numbers && batch.publish_part_numbers && batch.batch_type === 'publishing' && (() => {
