@@ -218,14 +218,66 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [token, handleFederatedLogout]);
 
   /**
-   * Logout - clear token and redirect to Aviation Gateway
+   * Logout - performs backend global sign-out and notifies Aviation Gateway
    */
-  const logout = useCallback(() => {
-    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-    setToken(null);
-    setUser(null);
-    window.location.href = AVIATION_GATEWAY_URL;
-  }, []);
+  const logout = useCallback(async () => {
+    try {
+      // Call backend logout endpoint to perform Cognito global sign-out
+      if (token) {
+        try {
+          const response = await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            console.log('Backend logout response:', result);
+
+            if (!result.global_signout_success) {
+              console.warn('Global sign-out failed but continuing with local logout');
+            }
+          } else {
+            console.warn('Backend logout failed, continuing with local logout');
+          }
+        } catch (error) {
+          console.error('Error calling logout endpoint:', error);
+          // Continue with local logout even if backend call fails
+        }
+      }
+
+      // Clear local state
+      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      setToken(null);
+      setUser(null);
+
+      // Notify Aviation Gateway of logout
+      // Aviation Gateway will then broadcast to all other child apps
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(
+          {
+            type: 'CHILD_APP_LOGOUT',
+            source: 'boeing-data-hub',
+            timestamp: Date.now(),
+          },
+          AVIATION_GATEWAY_URL
+        );
+      }
+
+      // Redirect to Aviation Gateway
+      window.location.href = AVIATION_GATEWAY_URL;
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Ensure we clean up and redirect even on error
+      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      setToken(null);
+      setUser(null);
+      window.location.href = AVIATION_GATEWAY_URL;
+    }
+  }, [token]);
 
   /**
    * Get Authorization header for API requests

@@ -40,5 +40,6 @@ class UserProfile(BaseModel):
 
 class LogoutResponse(BaseModel):
     """Logout response."""
-    message: str = Field(default="Logged out successfully")
-    success: bool = Field(default=True)
+    success: bool = Field(default=True, description="Whether logout completed")
+    message: str = Field(default="Logged out successfully", description="Logout result message")
+    global_signout_success: bool = Field(default=True, description="Whether Cognito global sign-out succeeded")
