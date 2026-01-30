@@ -29,6 +29,8 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const AVIATION_GATEWAY_URL = import.meta.env.VITE_AVIATION_GATEWAY_URL || 'http://localhost:8080';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const API_ROOT_URL = API_BASE_URL.replace(/\/api\/v1$/, '');
 const TOKEN_STORAGE_KEY = 'boeing_data_hub_sso_token';
 const LOGOUT_LISTENER_URL = `${AVIATION_GATEWAY_URL}/logout-listener`;
 const LOGOUT_EVENT_TYPE = 'AVIATION_GATEWAY_LOGOUT';
@@ -225,7 +227,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Call backend logout endpoint to perform Cognito global sign-out
       if (token) {
         try {
-          const response = await fetch('/api/auth/logout', {
+          const response = await fetch(`${API_ROOT_URL}/api/auth/logout`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -267,15 +269,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
         );
       }
 
-      // Redirect to Aviation Gateway
-      window.location.href = AVIATION_GATEWAY_URL;
+      // Redirect to Aviation Gateway with logout parameter
+      // This ensures Aviation Gateway logs out even if postMessage doesn't work
+      window.location.href = `${AVIATION_GATEWAY_URL}?logout=true`;
     } catch (error) {
       console.error('Logout error:', error);
       // Ensure we clean up and redirect even on error
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
       setToken(null);
       setUser(null);
-      window.location.href = AVIATION_GATEWAY_URL;
+      window.location.href = `${AVIATION_GATEWAY_URL}?logout=true`;
     }
   }, [token]);
 
