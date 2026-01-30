@@ -4,11 +4,11 @@ Authentication API endpoints.
 Provides:
 - POST /api/auth/login - Authenticate user and get session token
 - GET /api/auth/me - Get current user info
-- POST /api/auth/logout - Invalidate session
+- POST /api/auth/logout - Cognito Global Sign-Out
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Header
 
 from app.schemas.auth import (
     LoginRequest,
@@ -24,6 +24,7 @@ from app.core.auth import (
     SESSION_TIMEOUT,
 )
 from app.db.user_store import get_user_store
+from app.services.cognito_admin import global_signout_user
 
 logger = logging.getLogger(__name__)
 
@@ -79,17 +80,50 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/logout", response_model=LogoutResponse)
-async def logout(token: str = Depends(get_token_from_header)):
+async def logout(authorization: str = Header(None)):
     """
-    Logout and invalidate session token.
+    Logout endpoint that performs Cognito global sign-out.
 
-    Returns success even if token was already invalid.
+    Extracts the access token from Authorization header and calls
+    Cognito's GlobalSignOut API to revoke all refresh tokens.
+
+    Returns success even if global sign-out fails (graceful degradation).
+    The client will clear local tokens regardless of the result.
+
+    Args:
+        authorization: Bearer token from Authorization header
+
+    Returns:
+        LogoutResponse with success status and message
+
+    Raises:
+        HTTPException: 401 if Authorization header is missing or invalid
     """
-    if token:
-        invalidate_session(token)
-        logger.info("User logged out")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header"
+        )
 
-    return LogoutResponse(
-        message="Logged out successfully",
-        success=True
-    )
+    # Extract access token
+    access_token = authorization.replace("Bearer ", "")
+
+    # Perform global sign-out
+    result = await global_signout_user(access_token)
+
+    if result["success"]:
+        logger.info("Logout successful with global sign-out")
+        return LogoutResponse(
+            success=True,
+            message="Logged out successfully from all devices",
+            global_signout_success=True
+        )
+    else:
+        # Log the error but still return success
+        # Client will clear local tokens regardless
+        logger.warning(f"Global sign-out failed but allowing logout: {result.get('error')}")
+        return LogoutResponse(
+            success=True,
+            message="Logged out locally (global sign-out unavailable)",
+            global_signout_success=False
+        )
