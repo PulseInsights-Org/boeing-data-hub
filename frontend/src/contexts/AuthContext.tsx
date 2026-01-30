@@ -261,17 +261,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setToken(null);
       setUser(null);
 
-      // Redirect to Aviation Gateway
-      // Aviation Gateway will detect revoked token and log out automatically
-      console.log('Redirecting to Aviation Gateway...');
-      window.location.href = AVIATION_GATEWAY_URL;
+      // Redirect to Aviation Gateway logout endpoint for explicit logout
+      console.log('Redirecting to Aviation Gateway logout...');
+      window.location.href = `${AVIATION_GATEWAY_URL}/logout`;
     } catch (error) {
       console.error('Logout error:', error);
       // Ensure we clean up and redirect even on error
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
       setToken(null);
       setUser(null);
-      window.location.href = AVIATION_GATEWAY_URL;
+      window.location.href = `${AVIATION_GATEWAY_URL}/logout`;
     }
   }, [token]);
 
