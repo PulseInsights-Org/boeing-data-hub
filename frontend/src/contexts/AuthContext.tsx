@@ -220,13 +220,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [token, handleFederatedLogout]);
 
   /**
-   * Logout - performs backend global sign-out and notifies Aviation Gateway
+   * Logout - performs Cognito global sign-out and redirects to Aviation Gateway
+   *
+   * Simplified approach:
+   * 1. Call backend to perform Cognito GlobalSignOut (revokes all refresh tokens)
+   * 2. Clear local session storage
+   * 3. Redirect to Aviation Gateway
+   * 4. Aviation Gateway validates session with Cognito
+   * 5. Cognito rejects revoked token → Aviation Gateway logs out automatically
    */
   const logout = useCallback(async () => {
     try {
       // Call backend logout endpoint to perform Cognito global sign-out
       if (token) {
         try {
+          console.log('Calling backend GlobalSignOut API...');
           const response = await fetch(`${API_ROOT_URL}/api/auth/logout`, {
             method: 'POST',
             headers: {
@@ -237,11 +245,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
           if (response.ok) {
             const result = await response.json();
-            console.log('Backend logout response:', result);
-
-            if (!result.global_signout_success) {
-              console.warn('Global sign-out failed but continuing with local logout');
-            }
+            console.log('GlobalSignOut successful:', result);
           } else {
             console.warn('Backend logout failed, continuing with local logout');
           }
@@ -252,33 +256,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       // Clear local state
+      console.log('Clearing local session storage...');
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
       setToken(null);
       setUser(null);
 
-      // Notify Aviation Gateway of logout
-      // Aviation Gateway will then broadcast to all other child apps
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage(
-          {
-            type: 'CHILD_APP_LOGOUT',
-            source: 'boeing-data-hub',
-            timestamp: Date.now(),
-          },
-          AVIATION_GATEWAY_URL
-        );
-      }
-
-      // Redirect to Aviation Gateway with logout parameter
-      // This ensures Aviation Gateway logs out even if postMessage doesn't work
-      window.location.href = `${AVIATION_GATEWAY_URL}?logout=true`;
+      // Redirect to Aviation Gateway
+      // Aviation Gateway will detect revoked token and log out automatically
+      console.log('Redirecting to Aviation Gateway...');
+      window.location.href = AVIATION_GATEWAY_URL;
     } catch (error) {
       console.error('Logout error:', error);
       // Ensure we clean up and redirect even on error
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
       setToken(null);
       setUser(null);
-      window.location.href = `${AVIATION_GATEWAY_URL}?logout=true`;
+      window.location.href = AVIATION_GATEWAY_URL;
     }
   }, [token]);
 
