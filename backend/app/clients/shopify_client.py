@@ -14,6 +14,10 @@ class ShopifyClient:
         self._api_version = settings.shopify_api_version
         self._location_map = {}
         self._location_name_map = settings.shopify_location_map or {}
+        # Map Boeing location names to 3-char inventory location codes for metafield
+        # Example: {"Dallas Central": "1D1", "Chicago Warehouse": "CHI"}
+        self._inventory_location_codes = settings.shopify_inventory_location_codes or {}
+        logger.info(f"ShopifyClient initialized with inventory_location_codes: {self._inventory_location_codes}")
 
     async def _get_location_map(self) -> Dict[str, int]:
         if self._location_map:
@@ -90,15 +94,15 @@ class ShopifyClient:
     async def _set_product_category(self, product_id: int) -> None:
         """Set product category to 'Aircraft Parts & Accessories' using GraphQL.
 
-        Uses hardcoded category ID to avoid multiple API calls for taxonomy lookup.
+        Uses the category ID field directly as per Shopify's ProductInput specification.
         The category ID 'gid://shopify/TaxonomyCategory/vp-1-1' corresponds to:
         Vehicles & Parts > Vehicle Parts & Accessories > Aircraft Parts & Accessories
 
-        Note: productCategory in ProductInput requires API version 2024-10+.
-        If using an older API version, this will fail silently.
+        Note: category field in ProductInput requires API version 2024-10+.
         """
-        # Hardcoded category ID for "Aircraft Parts & Accessories"
-        # This avoids 3-4 GraphQL calls to traverse the taxonomy hierarchy
+        # Category ID for "Aircraft Parts & Accessories"
+        # Full path: Vehicles & Parts > Vehicle Parts & Accessories > Aircraft Parts & Accessories
+        # See: https://shopify.github.io/product-taxonomy/
         category_gid = "gid://shopify/TaxonomyCategory/vp-1-1"
 
         mutation = """
@@ -106,11 +110,10 @@ class ShopifyClient:
                 productUpdate(input: $input) {
                     product {
                         id
-                        productCategory {
-                            productTaxonomyNode {
-                                id
-                                name
-                            }
+                        category {
+                            id
+                            name
+                            fullName
                         }
                     }
                     userErrors { field message }
@@ -120,9 +123,7 @@ class ShopifyClient:
         variables = {
             "input": {
                 "id": self._to_gid("Product", product_id),
-                "productCategory": {
-                    "productTaxonomyNodeId": category_gid,
-                },
+                "category": category_gid,
             }
         }
 
@@ -132,7 +133,7 @@ class ShopifyClient:
             if errors:
                 logger.info("shopify category set failed product_id=%s errors=%s", product_id, errors)
             else:
-                category = (result.get("data") or {}).get("productUpdate", {}).get("product", {}).get("productCategory")
+                category = (result.get("data") or {}).get("productUpdate", {}).get("product", {}).get("category")
                 logger.info("shopify category set success product_id=%s category=%s", product_id, category)
         except HTTPException as exc:
             logger.info("shopify category set error product_id=%s detail=%s", product_id, exc.detail)
@@ -242,13 +243,181 @@ class ShopifyClient:
             raise HTTPException(status_code=502, detail=str(data.get("errors")))
         return data
 
-    def _build_metafields(self, product: Dict[str, Any]) -> list[Dict[str, Any]]:
-        """Build metafields using 'custom' namespace to match Shopify admin definitions.
+    def _map_unit_of_measure(self, uom: str) -> str:
+        """Map Boeing UOM values to Shopify allowed choices.
 
-        Only includes fields shown in the live store product metafields:
-        - Inventory location, Part number, Alternate part number, Unit of measure
-        - Condition, Cert, Trace, Manufacturer, Expiration date, PMA
-        - Estimated lead time (in days), Notes
+        Shopify custom.unit_of_measure is a Choice list with allowed values:
+        - EA, Inches, Pound, Pack (1PK = 25EA)
+
+        Returns empty string if no valid mapping found (field will be skipped).
+        """
+        if not uom:
+            return ""
+
+        uom_upper = uom.upper().strip()
+
+        # Direct mappings
+        if uom_upper in ("EA", "EACH"):
+            return "EA"
+        if uom_upper in ("IN", "INCH", "INCHES"):
+            return "Inches"
+        if uom_upper in ("LB", "LBS", "POUND", "POUNDS"):
+            return "Pound"
+        if uom_upper in ("PK", "PACK"):
+            return "Pack (1PK = 25EA)"
+
+        # Default to EA for common unit types
+        if uom_upper in ("PC", "PCS", "PIECE", "PIECES", "UNIT", "UNITS"):
+            return "EA"
+
+        # If no mapping found, skip this field to avoid validation errors
+        logger.info(f"shopify UOM not mapped, skipping: {uom}")
+        return ""
+
+    def _map_cert(self, cert: str) -> str:
+        """Map cert values to Shopify allowed choices.
+
+        Shopify custom.cert (tracedoc) is a Choice list with allowed values:
+        - EASA Form 1, FAA 8130-3, Brazil Form SEGV00 003, OEM Cert,
+        - 121 Trace, 129 Trace, 145 Trace, Transport Canada Form 1, C of C, CAA UK
+
+        Returns empty string if no valid mapping found (field will be skipped).
+        """
+        if not cert:
+            return ""
+
+        cert_upper = cert.upper().strip()
+
+        # Direct/partial mappings
+        if "8130" in cert_upper or "FAA" in cert_upper:
+            return "FAA 8130-3"
+        if "EASA" in cert_upper:
+            return "EASA Form 1"
+        if "BRAZIL" in cert_upper or "SEGV" in cert_upper:
+            return "Brazil Form SEGV00 003"
+        if "OEM" in cert_upper:
+            return "OEM Cert"
+        if "121" in cert_upper:
+            return "121 Trace"
+        if "129" in cert_upper:
+            return "129 Trace"
+        if "145" in cert_upper:
+            return "145 Trace"
+        if "CANADA" in cert_upper or "TRANSPORT" in cert_upper:
+            return "Transport Canada Form 1"
+        if "C OF C" in cert_upper or "COC" in cert_upper or "CERTIFICATE OF CONFORMANCE" in cert_upper:
+            return "C of C"
+        if "CAA" in cert_upper and "UK" in cert_upper:
+            return "CAA UK"
+
+        # Default to FAA 8130-3 for aerospace parts
+        return "FAA 8130-3"
+
+    def _validate_trace_url(self, trace: str) -> str:
+        """Validate trace URL against Shopify allowed domains.
+
+        Shopify custom.tracedoc (Link type) only allows:
+        - https://cdn.shopify.com/
+        - https://www.getsmartcert.com/
+
+        Returns empty string if URL doesn't match allowed domains.
+        """
+        if not trace:
+            return ""
+
+        trace = trace.strip()
+
+        # Check if URL matches allowed domains
+        allowed_domains = [
+            "https://cdn.shopify.com/",
+            "https://www.getsmartcert.com/",
+        ]
+
+        for domain in allowed_domains:
+            if trace.startswith(domain):
+                return trace
+
+        # URL not from allowed domain, skip to avoid validation error
+        logger.info(f"shopify trace URL not from allowed domain, skipping: {trace}")
+        return ""
+
+    def _map_inventory_location(self, location: str, location_id: str = "") -> str:
+        """Map inventory location to exactly 3 characters.
+
+        Shopify custom.inventory_location has Character limit: Min 3, Max 3.
+        This field stores a location ID (e.g., "1D1"), not a location name.
+
+        Args:
+            location: Full location string like "Dallas Central: 106"
+            location_id: Optional pre-defined location ID (exactly 3 chars)
+
+        Returns:
+            3-character location ID or empty string if not available
+
+        Configuration:
+            Set SHOPIFY_INVENTORY_LOCATION_CODES env var as JSON:
+            {"Dallas Central": "1D1", "Chicago Warehouse": "CHI"}
+        """
+        logger.info(f"shopify _map_inventory_location called: location='{location}', location_id='{location_id}', codes={self._inventory_location_codes}")
+
+        # If a location_id is explicitly provided and valid, use it
+        if location_id and len(location_id.strip()) == 3:
+            logger.info(f"shopify inventory_location using provided location_id: {location_id.strip()}")
+            return location_id.strip()
+
+        # If the location string itself is exactly 3 chars, it might be an ID
+        if location and len(location.strip()) == 3:
+            logger.info(f"shopify inventory_location using 3-char location string: {location.strip()}")
+            return location.strip()
+
+        # Try to map using the configured location codes
+        if location and self._inventory_location_codes:
+            # Extract just the location name (before the colon if present)
+            # e.g., "Dallas Central: 106" -> "Dallas Central"
+            # Handle multiple locations (semicolon-separated) - use the first one
+            first_location = location.split(";")[0].strip() if ";" in location else location
+            location_name = first_location.split(":")[0].strip() if ":" in first_location else first_location.strip()
+
+            logger.info(f"shopify inventory_location extracted name: '{location_name}' from '{location}'")
+
+            # Check for exact match
+            if location_name in self._inventory_location_codes:
+                code = self._inventory_location_codes[location_name]
+                logger.info(f"shopify inventory_location exact match found: '{location_name}' -> '{code}'")
+                if len(code) == 3:
+                    return code
+
+            # Check for partial match (case-insensitive)
+            location_upper = location_name.upper()
+            for name, code in self._inventory_location_codes.items():
+                if name.upper() in location_upper or location_upper in name.upper():
+                    logger.info(f"shopify inventory_location partial match found: '{name}' -> '{code}'")
+                    if len(code) == 3:
+                        return code
+
+        # Cannot determine location ID - skip this field
+        if location:
+            logger.info(f"shopify inventory_location skipped - no mapping for: '{location}', available codes: {self._inventory_location_codes}")
+        return ""
+
+    def _build_metafields(self, product: Dict[str, Any]) -> list[Dict[str, Any]]:
+        """Build metafields using 'custom' namespace matching Shopify admin definitions.
+
+        Shopify Metafield Definitions and Validations (from store):
+        - inventory_location: single_line_text_field (no validation)
+        - part_number: single_line_text_field (no validation)
+        - alternate_part_number: single_line_text_field (no validation)
+        - unit_of_measure: Choice list - EA, Inches, Pound, Pack (1PK = 25EA)
+        - condition: single_line_text_field (max 3 chars - NE, OH, SV, etc.)
+        - cert: Choice list - EASA Form 1, FAA 8130-3, etc.
+        - trace (tracedoc): Link (url) - Limited to: cdn.shopify.com, getsmartcert.com
+        - manufacturer: single_line_text_field (no validation)
+        - expiration_date: date (YYYY-MM-DD format)
+        - pma: boolean (True or False)
+        - estimated_lead_time: number_integer
+        - notes: multi_line_text_field (no validation)
+
+        IMPORTANT: Some fields have strict validation. We skip fields that would fail validation.
         """
         shopify_data = product.get("shopify") or {}
 
@@ -258,49 +427,124 @@ class ShopifyClient:
         # Part number: strip the =XX suffix (e.g., "4811-160-3=E9" -> "4811-160-3")
         part_number = raw_sku.split("=")[0] if "=" in raw_sku else raw_sku
 
-        # Alternate part number: same as part number (both without suffix)
+        # Alternate part number: should be blank (not pushed)
         title = shopify_data.get("title") or product.get("title") or ""
-        alternate_part_number = title.split("=")[0] if "=" in title else title
+        alternate_part_number = ""
 
         manufacturer = shopify_data.get("manufacturer") or product.get("manufacturer") or product.get("supplier_name") or ""
-        base_uom = shopify_data.get("unit_of_measure") or product.get("baseUOM") or product.get("base_uom") or ""
-        condition = product.get("condition") or "NE"
-        pma = product.get("pma")
-        lead_time = product.get("estimated_lead_time_days") or product.get("estimatedLeadTimeDays") or 3
-        location_summary = shopify_data.get("location_summary") or product.get("location_summary") or ""
-        trace = shopify_data.get("trace") or product.get("trace") or ""
-        expiration_date = shopify_data.get("expiration_date") or product.get("expiration_date") or ""
         notes = shopify_data.get("notes") or product.get("notes") or ""
-        cert = shopify_data.get("cert") or product.get("cert") or "FAA 8130-3"
+        expiration_date = shopify_data.get("expiration_date") or product.get("expiration_date") or ""
 
-        # Only include fields that are shown in the live store product metafields
-        raw = [
-            ("inventory_location", location_summary, "single_line_text_field"),
+        # Inventory location: Must be EXACTLY 3 characters (e.g., "1D1")
+        # The Shopify metafield has Min 3, Max 3 character limit
+        # This is a location ID, not a location name
+        raw_location = shopify_data.get("location_summary") or product.get("location_summary") or ""
+        location_id = shopify_data.get("location_id") or product.get("location_id") or ""
+        inventory_location = self._map_inventory_location(raw_location, location_id)
+
+        # Condition: Must be max 3 characters (NE, OH, SV, AR, etc.)
+        raw_condition = product.get("condition") or "NE"
+        condition = raw_condition[:2] if len(raw_condition) > 3 else raw_condition  # Truncate to 2 chars to be safe
+
+        # Map values to Shopify allowed choices
+        raw_uom = shopify_data.get("unit_of_measure") or product.get("baseUOM") or product.get("base_uom") or ""
+        unit_of_measure = self._map_unit_of_measure(raw_uom)
+
+        # Build metafields list - only include fields with valid values
+        metafields = []
+
+        # Fields with no validation constraints (always include if non-empty)
+        simple_fields = [
             ("part_number", part_number, "single_line_text_field"),
             ("alternate_part_number", alternate_part_number, "single_line_text_field"),
-            ("unit_of_measure", base_uom, "single_line_text_field"),
-            ("condition", condition, "single_line_text_field"),
-            ("cert", cert, "single_line_text_field"),
-            ("trace", trace, "url"),
             ("manufacturer", manufacturer, "single_line_text_field"),
-            ("expiration_date", expiration_date, "date"),
-            ("pma", str(pma).lower() if pma is not None else "", "boolean"),
-            ("estimated_lead_time", str(lead_time), "number_integer"),
             ("notes", notes, "multi_line_text_field"),
         ]
 
-        metafields = []
-        for key, value, mtype in raw:
-            if str(value).strip() == "":
-                continue
-            metafields.append(
-                {
+        for key, value, mtype in simple_fields:
+            if str(value).strip():
+                metafields.append({
                     "namespace": "custom",
                     "key": key,
                     "value": str(value),
                     "type": mtype,
-                }
-            )
+                })
+
+        # Inventory location: EXACTLY 3 characters required (Min 3, Max 3)
+        if inventory_location and len(inventory_location) == 3:
+            metafields.append({
+                "namespace": "custom",
+                "key": "inventory_location",
+                "value": inventory_location,
+                "type": "single_line_text_field",
+            })
+
+        # Condition: max 3 characters
+        if condition and len(condition) <= 3:
+            metafields.append({
+                "namespace": "custom",
+                "key": "condition",
+                "value": condition,
+                "type": "single_line_text_field",
+            })
+
+        # Unit of measure: Choice list field - only include if mapped to valid choice
+        if unit_of_measure:
+            metafields.append({
+                "namespace": "custom",
+                "key": "unit_of_measure",
+                "value": unit_of_measure,
+                "type": "single_line_text_field",
+            })
+
+        # Cert field: Choice list with key "trace" (not "cert")
+        # Valid values: EASA Form 1, FAA 8130-3, Brazil Form SEGV00 003, OEM Cert,
+        #               121 Trace, 129 Trace, 145 Trace, Transport Canada Form 1, C of C, CAA UK
+        raw_cert = shopify_data.get("cert") or product.get("cert") or "FAA 8130-3"
+        cert = self._map_cert(raw_cert)
+        if cert:
+            metafields.append({
+                "namespace": "custom",
+                "key": "trace",  # Note: Shopify key is 'trace' for the Cert field (custom.trace)
+                "value": cert,
+                "type": "single_line_text_field",
+            })
+
+        # URL field (tracedoc) - only include if from allowed domain
+        raw_trace_url = shopify_data.get("trace") or product.get("trace") or ""
+        trace_url = self._validate_trace_url(raw_trace_url)
+        if trace_url:
+            metafields.append({
+                "namespace": "custom",
+                "key": "tracedoc",  # Note: key is 'tracedoc' for the URL/Link field
+                "value": trace_url,
+                "type": "url",
+            })
+
+        # Date field - only include if valid format
+        if expiration_date:
+            metafields.append({
+                "namespace": "custom",
+                "key": "expiration_date",
+                "value": str(expiration_date),
+                "type": "date",
+            })
+
+        # Estimated lead time (in days) - Integer field
+        estimated_lead_time = (
+            shopify_data.get("estimated_lead_time_days")
+            or product.get("estimated_lead_time_days")
+            or 60  # Default to 60 days
+        )
+        if estimated_lead_time is not None:
+            metafields.append({
+                "namespace": "custom",
+                "key": "estimated_lead_time",
+                "value": str(int(estimated_lead_time)),
+                "type": "number_integer",
+            })
+            logger.info(f"shopify estimated_lead_time added: {estimated_lead_time}")
+
         return metafields
 
     def to_shopify_product_body(self, product: Dict[str, Any]) -> Dict[str, Any]:
@@ -412,7 +656,7 @@ class ShopifyClient:
                     {
                         "namespace": "boeing",
                         "key": "alternate_part_number",
-                        "value": title,
+                        "value": "",
                         "type": "single_line_text_field",
                     },
                     {
@@ -545,7 +789,7 @@ class ShopifyClient:
             {"namespace": "custom", "key": "schedule_b_code", "name": "Schedule B Code", "type": "single_line_text_field"},
             {"namespace": "custom", "key": "description", "name": "Description", "type": "single_line_text_field"},
             {"namespace": "custom", "key": "condition", "name": "Condition", "type": "single_line_text_field"},
-            {"namespace": "custom", "key": "pma", "name": "PMA", "type": "boolean"},
+            {"namespace": "custom", "key": "pma", "name": "PMA", "type": "single_line_text_field"},
             {"namespace": "custom", "key": "estimated_lead_time", "name": "Estimated lead time (in days)", "type": "number_integer"},
             {"namespace": "custom", "key": "cert", "name": "Cert", "type": "single_line_text_field"},
             {"namespace": "custom", "key": "inventory_location", "name": "Inventory location", "type": "single_line_text_field"},
@@ -609,6 +853,12 @@ class ShopifyClient:
         logger.info("shopify update payload id=%s payload=%s", shopify_product_id, body)
         data = await self._call_shopify("PUT", f"/products/{shopify_product_id}.json", json=body)
         shopify_product = data.get("product") or {}
+        product_id = shopify_product.get("id")
+
+        # Set product category using GraphQL (REST API doesn't support standardized categories)
+        if product_id:
+            await self._set_product_category(product_id)
+
         variants = shopify_product.get("variants") or []
         location_quantities = (product.get("shopify") or {}).get("location_quantities") or []
         if variants and location_quantities:

@@ -1,4 +1,5 @@
 import logging
+import uuid
 from typing import Any, Dict, List
 
 import httpx
@@ -189,7 +190,7 @@ class SupabaseStore:
             status = rec.get("status") or "fetched"
 
             row_data = {
-                    "id": part_number,
+                    "id": str(uuid.uuid4()),
                     "sku": part_number,
                     "title": name,
                     "body_html": description,
@@ -309,7 +310,7 @@ class SupabaseStore:
         notes = record.get("notes")
 
         db_row = {
-            "id": part_number,
+            "id": str(uuid.uuid4()),
             "sku": part_number,
             "title": name,
             "body_html": description,

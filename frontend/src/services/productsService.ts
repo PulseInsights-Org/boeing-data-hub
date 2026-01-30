@@ -36,6 +36,7 @@ export interface PublishedProduct {
 export interface PublishedProductsResponse {
   products: PublishedProduct[];
   total: number;
+  shopify_store_domain: string | null;
 }
 
 /**

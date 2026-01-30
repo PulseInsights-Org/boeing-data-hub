@@ -23,9 +23,11 @@ class LoginResponse(BaseModel):
 
 
 class User(BaseModel):
-    """User model for current user info."""
-    user_id: str = Field(..., description="Unique user identifier")
-    username: str = Field(..., description="Username")
+    """User model for current user info from Cognito token."""
+    user_id: str = Field(..., description="Unique user identifier (Cognito sub)")
+    username: Optional[str] = Field(None, description="Username")
+    email: Optional[str] = Field(None, description="User email")
+    groups: list[str] = Field(default_factory=list, description="Cognito groups")
 
 
 class UserProfile(BaseModel):

@@ -13,6 +13,7 @@ import logging
 from typing import List, Dict, Any
 
 import httpx
+from fastapi import HTTPException
 
 from celery_app.celery_config import celery_app
 from celery_app.tasks.base import (
@@ -124,6 +125,20 @@ def publish_product(self, batch_id: str, part_number: str, user_id: str = "syste
         )
         if not record:
             raise NonRetryableError(f"Product {part_number} not found in staging for user {user_id}")
+
+        # 2. Validate price and inventory - reject products with zero or missing values
+        price = record.get("price") or record.get("list_price") or record.get("net_price") or record.get("cost_per_item")
+        inventory = record.get("inventory_quantity")
+
+        if price is None or price == 0:
+            raise NonRetryableError(
+                f"Product {part_number} has no valid price (price=0 or missing). Cannot publish to Shopify."
+            )
+
+        if inventory is None or inventory == 0:
+            raise NonRetryableError(
+                f"Product {part_number} has no inventory (quantity=0 or missing). Cannot publish to Shopify."
+            )
 
         # Check if already published (has shopify_product_id)
         existing_shopify_id = record.get("shopify_product_id")
@@ -237,6 +252,26 @@ def publish_product(self, batch_id: str, part_number: str, user_id: str = "syste
         from celery_app.tasks.batch import check_batch_completion
         check_batch_completion.delay(batch_id)
         raise
+
+    except HTTPException as e:
+        # HTTP errors from Shopify API - 4xx errors are non-retryable
+        error_msg = f"Shopify API error {e.status_code}: {e.detail}"
+        logger.error(f"Failed to publish {part_number}: {error_msg}")
+
+        if 400 <= e.status_code < 500:
+            # Client errors (4xx) are not retryable - record failure immediately
+            batch_store.record_failure(batch_id, part_number, error_msg)
+            from celery_app.tasks.batch import check_batch_completion
+            check_batch_completion.delay(batch_id)
+            # Don't re-raise HTTPException as it can't be pickled by Celery
+            raise NonRetryableError(error_msg)
+        else:
+            # Server errors (5xx) might be transient - let Celery retry
+            if self.request.retries >= self.max_retries:
+                batch_store.record_failure(batch_id, part_number, error_msg)
+                from celery_app.tasks.batch import check_batch_completion
+                check_batch_completion.delay(batch_id)
+            raise RetryableError(error_msg)
 
     except Exception as e:
         logger.error(f"Failed to publish {part_number}: {e}")

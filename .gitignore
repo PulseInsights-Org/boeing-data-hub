@@ -7,10 +7,16 @@
 # Dependencies
 node_modules/
 __pycache__/
+backend/app/__pycache__
 *.pyc
 venv/
 .venv/
-
+backend/celery_app/tasks/__pycache__
+backend/app/schemas/__pycache__
+backend/app/routes/__pycache__
+backend/app/db/__pycache__
+backend/app/core/__pycache__
+backend/app/clients/__pycache__
 # Build outputs
 dist/
 build/
@@ -34,3 +40,7 @@ logs/
 coverage/
 .coverage
 htmlcov/
+
+backend/.env
+frontend/.env.local
+.claude

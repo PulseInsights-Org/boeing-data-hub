@@ -101,6 +101,9 @@ async def bulk_publish(
 
     Accepts a list of part numbers (must exist in product_staging) and
     queues them for publishing to Shopify.
+
+    If batch_id is provided, uses that existing batch (continues the pipeline).
+    Otherwise creates a new batch (for standalone publish operations).
     """
     user_id = current_user["user_id"]
 
@@ -119,9 +122,58 @@ async def bulk_publish(
 
     from celery_app.tasks.publishing import publish_batch
 
-    # Create batch record with user_id and part_numbers
+    # If batch_id is provided, use the existing batch (continues the pipeline)
+    if request.batch_id:
+        batch = batch_store.get_batch_by_user(request.batch_id, user_id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+
+        # Verify batch is in a state that allows publishing
+        if batch["batch_type"] not in ("normalized", "search"):
+            if batch["batch_type"] == "publishing" and batch["status"] == "processing":
+                raise HTTPException(status_code=400, detail="Publishing already in progress for this batch")
+
+        # Get the actual count of items being published (may be less than original search)
+        publish_count = len(request.part_numbers)
+
+        # Update batch type to "publishing" and store publishable part numbers separately
+        # This preserves the original part_numbers from search while tracking what's being published
+        batch_store.update_batch_type(
+            request.batch_id,
+            "publishing",
+            new_total_items=publish_count,
+            publish_part_numbers=request.part_numbers
+        )
+        batch_store.update_status(request.batch_id, "processing")
+
+        # Reset published_count and failed_count for the new publishing stage
+        batch_store.client.table("batches").update({
+            "published_count": 0,
+            "failed_count": 0,
+            "failed_items": []
+        }).eq("id", request.batch_id).execute()
+
+        # Queue the publish task with the publishable part numbers
+        task = publish_batch.delay(request.batch_id, request.part_numbers, user_id)
+
+        # Update batch with celery task ID
+        batch_store.client.table("batches").update({
+            "celery_task_id": task.id
+        }).eq("id", request.batch_id).execute()
+
+        logger.info(f"Started publishing for existing batch {request.batch_id} with {publish_count} publishable products (original search had {batch['total_items']} items)")
+
+        return BulkOperationResponse(
+            batch_id=request.batch_id,
+            total_items=publish_count,
+            status="processing",
+            message=f"Publishing started for batch. Processing {publish_count} products.",
+            idempotency_key=request.idempotency_key
+        )
+
+    # No batch_id provided - create a new batch (standalone publish)
     batch = batch_store.create_batch(
-        batch_type="publish",
+        batch_type="publishing",
         total_items=len(request.part_numbers),
         idempotency_key=request.idempotency_key,
         user_id=user_id,
@@ -180,6 +232,7 @@ async def list_batches(
             failed_count=b["failed_count"],
             progress_percent=progress,
             part_numbers=b.get("part_numbers"),
+            publish_part_numbers=b.get("publish_part_numbers"),
             error_message=b.get("error_message"),
             idempotency_key=b.get("idempotency_key"),
             created_at=b["created_at"],
@@ -253,6 +306,7 @@ async def get_batch_status(
         progress_percent=progress,
         failed_items=failed_items,
         part_numbers=batch.get("part_numbers"),
+        publish_part_numbers=batch.get("publish_part_numbers"),
         error_message=batch.get("error_message"),
         idempotency_key=batch.get("idempotency_key"),
         created_at=batch["created_at"],
@@ -363,30 +417,67 @@ async def get_raw_boeing_data(
     user_id = current_user["user_id"]
     client = create_client(settings.supabase_url, settings.supabase_key)
 
+    # Helper to strip variant suffix (e.g., "WF338109=K3" -> "WF338109")
+    def strip_suffix(pn: str) -> str:
+        return pn.split("=")[0] if pn else ""
+
+    # Search part number (stripped for comparison)
+    search_pn_stripped = strip_suffix(part_number)
+
     try:
-        # Search for the part number in boeing_raw_data table
-        # The search_query field contains comma-separated part numbers
-        # Filter by user_id for user-specific data
+        # Step 1: Fetch recent records with only metadata (avoid large payload issues)
+        # The ilike filter with patterns like %2D... can cause URL encoding issues
+        # So we fetch recent records and filter in Python
         result = client.table("boeing_raw_data")\
-            .select("*")\
+            .select("id, search_query, created_at")\
             .eq("user_id", user_id)\
-            .ilike("search_query", f"%{part_number}%")\
             .order("created_at", desc=True)\
-            .limit(1)\
+            .limit(50)\
             .execute()
 
         if not result.data:
             return {"raw_data": None, "message": "No raw data found for this part number"}
 
-        raw_record = result.data[0]
-        raw_payload = raw_record.get("raw_payload", {})
+        # Step 2: Find matching record by checking search_query in Python
+        matching_record_id = None
+        matching_search_query = None
+        matching_created_at = None
 
-        # Extract the specific line item for this part number from the payload
+        for record in result.data:
+            search_query = record.get("search_query", "")
+            # Check if part number (exact or stripped) is in the search query
+            search_parts = [p.strip() for p in search_query.split(",")]
+            search_parts_stripped = [strip_suffix(p) for p in search_parts]
+
+            if part_number in search_parts or search_pn_stripped in search_parts_stripped:
+                matching_record_id = record.get("id")
+                matching_search_query = search_query
+                matching_created_at = record.get("created_at")
+                break
+
+        if not matching_record_id:
+            return {"raw_data": None, "message": "No raw data found for this part number"}
+
+        # Step 3: Fetch the full record with raw_payload by ID
+        full_result = client.table("boeing_raw_data")\
+            .select("raw_payload")\
+            .eq("id", matching_record_id)\
+            .single()\
+            .execute()
+
+        if not full_result.data:
+            return {"raw_data": None, "message": "Failed to fetch raw payload"}
+
+        raw_payload = full_result.data.get("raw_payload", {})
+
+        # Step 4: Extract the specific line item for this part number
         line_items = raw_payload.get("lineItems", [])
         matching_item = None
 
         for item in line_items:
-            if item.get("aviallPartNumber") == part_number:
+            aviall_pn = item.get("aviallPartNumber") or ""
+            # Match either exact or stripped version
+            if aviall_pn == part_number or strip_suffix(aviall_pn) == search_pn_stripped:
                 matching_item = item
                 break
 
@@ -396,15 +487,15 @@ async def get_raw_boeing_data(
                     **matching_item,
                     "currency": raw_payload.get("currency")
                 },
-                "search_query": raw_record.get("search_query"),
-                "fetched_at": raw_record.get("created_at")
+                "search_query": matching_search_query,
+                "fetched_at": matching_created_at
             }
         else:
             # Return the full payload if specific item not found
             return {
                 "raw_data": raw_payload,
-                "search_query": raw_record.get("search_query"),
-                "fetched_at": raw_record.get("created_at")
+                "search_query": matching_search_query,
+                "fetched_at": matching_created_at
             }
 
     except Exception as e:
@@ -413,14 +504,35 @@ async def get_raw_boeing_data(
 
 
 def _calculate_progress(batch: dict) -> float:
-    """Calculate progress percentage based on batch type."""
-    total = batch["total_items"]
-    if total == 0:
-        return 0.0
+    """Calculate progress percentage based on batch type.
 
-    if batch["batch_type"] == "search":
+    For search batches: progress = (normalized + failed) / total_items
+    For normalized batches: 100% (search complete, ready for publish)
+    For publishing batches: progress = (published + failed) / publish_count
+
+    Note: Publishing uses publish_part_numbers length as total since only
+    products with inventory/price are queued for publishing.
+    """
+    batch_type = batch["batch_type"]
+
+    if batch_type == "search":
+        # Search stage: progress based on normalization
+        total = batch["total_items"]
+        if total == 0:
+            return 0.0
         completed = batch["normalized_count"] + batch["failed_count"]
-    else:  # publish
-        completed = batch["published_count"] + batch["failed_count"]
+        return round((completed / total) * 100, 2)
 
-    return round((completed / total) * 100, 2)
+    elif batch_type == "normalized":
+        # Normalized stage: search is complete, show 100%
+        return 100.0
+
+    else:  # publishing or publish
+        # Publishing stage: use publish_part_numbers count as total
+        # since only products with inventory/price are queued for publishing
+        publish_part_numbers = batch.get("publish_part_numbers") or []
+        total = len(publish_part_numbers) if publish_part_numbers else batch["total_items"]
+        if total == 0:
+            return 0.0
+        completed = batch["published_count"] + batch["failed_count"]
+        return round((completed / total) * 100, 2)

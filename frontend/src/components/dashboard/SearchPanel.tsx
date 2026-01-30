@@ -3,7 +3,7 @@ import { RealtimeChannel } from '@supabase/supabase-js';
 import {
   Loader2,
   Upload,
-  Search,
+  CloudDownload,
   X,
   CheckCircle2,
   AlertCircle,
@@ -26,6 +26,12 @@ import { subscribeToAllStagingUpdates, unsubscribe } from '@/services/realtimeSe
 
 type StatusFilter = 'all' | 'active' | 'completed' | 'failed' | 'cancelled';
 
+// Helper function to strip variant suffix from part numbers (e.g., "WF338109=K3" -> "WF338109")
+const stripVariantSuffix = (partNumber: string): string => {
+  if (!partNumber) return '';
+  return partNumber.split('=')[0];
+};
+
 interface SearchPanelProps {
   activeBatches: BatchStatusResponse[];
   isStarting: boolean;
@@ -38,9 +44,9 @@ interface SearchPanelProps {
   onSetStatusFilter: (status: string | null) => void;
   onLoadBatchProducts: (batchId: string) => Promise<NormalizedProduct[]>;
   onClearBatchProducts: () => void;
-  onBulkPublishBatch: (batchId: string, products: NormalizedProduct[]) => Promise<void>;
+  onBulkPublishBatch: (batchId: string, products: NormalizedProduct[]) => Promise<string | null>;
   onEditProduct: (product: NormalizedProduct) => void;
-  onPublishProduct: (productId: string) => Promise<{ success: boolean; error?: string }>;
+  onPublishProduct: (product: NormalizedProduct, batchId?: string) => Promise<{ success: boolean; error?: string }>;
   actionLoading: { [key: string]: boolean };
 }
 
@@ -93,14 +99,35 @@ export function SearchPanel({
         );
 
         if (productIndex >= 0) {
-          // Update the product with new status
+          // Merge ALL updated fields from the realtime event, not just status
           const updatedProducts = [...products];
           updatedProducts[productIndex] = {
             ...updatedProducts[productIndex],
+            // Merge all fields from the updated product
+            ...(updatedProduct.title && { title: updatedProduct.title }),
+            ...(updatedProduct.sku && { sku: updatedProduct.sku }),
+            ...(updatedProduct.price !== undefined && { price: updatedProduct.price }),
+            ...(updatedProduct.net_price !== undefined && { net_price: updatedProduct.net_price }),
+            ...(updatedProduct.cost_per_item !== undefined && { cost_per_item: updatedProduct.cost_per_item }),
+            ...(updatedProduct.inventory_quantity !== undefined && { inventory: updatedProduct.inventory_quantity }),
+            ...(updatedProduct.weight !== undefined && { weight: updatedProduct.weight }),
+            ...(updatedProduct.body_html && { body_html: updatedProduct.body_html }),
+            ...(updatedProduct.vendor && { vendor: updatedProduct.vendor }),
+            ...(updatedProduct.condition && { condition: updatedProduct.condition }),
+            ...(updatedProduct.base_uom && { base_uom: updatedProduct.base_uom }),
+            ...(updatedProduct.supplier_name && { supplier_name: updatedProduct.supplier_name }),
+            ...(updatedProduct.country_of_origin && { country_of_origin: updatedProduct.country_of_origin }),
+            ...(updatedProduct.dim_length !== undefined && { dim_length: updatedProduct.dim_length }),
+            ...(updatedProduct.dim_width !== undefined && { dim_width: updatedProduct.dim_width }),
+            ...(updatedProduct.dim_height !== undefined && { dim_height: updatedProduct.dim_height }),
+            ...(updatedProduct.dim_uom && { dim_uom: updatedProduct.dim_uom }),
+            ...(updatedProduct.notes && { notes: updatedProduct.notes }),
+            // Always update status if present
             status: (updatedProduct.status as ProductStatus) || updatedProducts[productIndex].status,
           };
           newBatchProducts[batchId] = updatedProducts;
           updated = true;
+          console.log('[SearchPanel] Product updated via realtime:', updatedProduct.sku, updatedProduct);
         }
       });
 
@@ -186,7 +213,6 @@ export function SearchPanel({
       await onBulkPublishBatch(batchId, products);
 
       // After publishing starts, wait a moment then refresh products to show updated status
-      // The actual status updates will come via the useEffect when publish batch completes
       setTimeout(async () => {
         try {
           const updatedProducts = await onLoadBatchProducts(batchId);
@@ -258,6 +284,39 @@ export function SearchPanel({
     return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Format batch type for display - shows pipeline stage with status awareness
+  const formatBatchType = (batchType: string, status: BatchStatus) => {
+    // When completed, show past-tense labels
+    if (status === 'completed') {
+      switch (batchType) {
+        case 'search':
+          return 'Fetched';
+        case 'normalized':
+          return 'Normalized -> Ready to Publish';
+        case 'publishing':
+          return 'Published';
+        case 'publish':
+          return 'Published';
+        default:
+          return batchType;
+      }
+    }
+
+    // For active/in-progress states
+    switch (batchType) {
+      case 'search':
+        return 'Fetching';
+      case 'normalized':
+        return 'Normalizing';
+      case 'publishing':
+        return 'Publishing';
+      case 'publish':
+        return 'Publishing';
+      default:
+        return batchType;
+    }
+  };
+
   const activeBatchesCount = activeBatches.filter(
     b => b.status === 'pending' || b.status === 'processing'
   ).length;
@@ -269,12 +328,12 @@ export function SearchPanel({
         <div className="max-w-4xl">
           <div className="flex items-center gap-3 mb-4">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-              <Search className="h-4 w-4 text-primary" />
+              <CloudDownload className="h-4 w-4 text-primary" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-foreground">Search Parts</h2>
+              <h2 className="text-base font-semibold text-foreground">Fetch Parts</h2>
               <p className="text-xs text-muted-foreground">
-                Enter part numbers to search and fetch from Boeing Commerce Connect
+                Enter part numbers to fetch product data from Boeing
               </p>
             </div>
           </div>
@@ -297,10 +356,10 @@ export function SearchPanel({
             </div>
           )}
 
-          {/* Search Input */}
+          {/* Fetch Input */}
           <div className="flex gap-3">
             <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <CloudDownload className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Enter part numbers (comma, semicolon, or space separated)"
                 value={partNumbersText}
@@ -323,8 +382,8 @@ export function SearchPanel({
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <>
-                  <Search className="h-4 w-4 mr-2" />
-                  Search
+                  <CloudDownload className="h-4 w-4 mr-2" />
+                  Fetch
                 </>
               )}
             </Button>
@@ -343,7 +402,7 @@ export function SearchPanel({
           {/* Section Header */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-medium text-foreground">Recent Searches</h3>
+              <h3 className="text-sm font-medium text-foreground">Recent Requests</h3>
               {activeBatchesCount > 0 && (
                 <span className="bg-primary text-primary-foreground text-xs px-2 py-0.5 rounded-full font-medium">
                   {activeBatchesCount} active
@@ -361,42 +420,45 @@ export function SearchPanel({
             </Button>
           </div>
 
-          {/* Status Filter Tabs */}
-          <div className="flex items-center gap-1 mb-4 p-1 bg-muted rounded-lg w-fit">
-            {STATUS_FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                onClick={() => onSetStatusFilter(filter.value === 'all' ? null : filter.value)}
-                className={cn(
-                  "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
-                  (statusFilter === filter.value || (filter.value === 'all' && !statusFilter))
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {filter.label}
-              </button>
-            ))}
-          </div>
+          {/* Status Filter Tabs and Pipeline Legend - Same Row */}
+          <div className="flex items-center justify-between mb-4">
+            {/* Status Filter Tabs */}
+            <div className="flex items-center gap-1 p-1 bg-muted rounded-lg w-fit">
+              {STATUS_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  onClick={() => onSetStatusFilter(filter.value === 'all' ? null : filter.value)}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                    (statusFilter === filter.value || (filter.value === 'all' && !statusFilter))
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
 
-          {/* Pipeline Legend */}
-          <div className="flex items-center gap-4 text-xs text-muted-foreground mb-4">
-            <span className="font-medium">Pipeline stages:</span>
-            <div className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-slate-400" />
-              <span>Extracted</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-amber-400" />
-              <span>Normalized</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              <span>Published</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-red-500" />
-              <span>Failed</span>
+            {/* Pipeline Legend */}
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span className="font-medium">Pipeline stages:</span>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-slate-400" />
+                <span>Extracted</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                <span>Normalized</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span>Published</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-red-500" />
+                <span>No Stock</span>
+              </div>
             </div>
           </div>
 
@@ -406,19 +468,35 @@ export function SearchPanel({
               <div className="rounded-full bg-muted p-4 mb-4">
                 <Package className="h-8 w-8 text-muted-foreground" />
               </div>
-              <h3 className="text-base font-medium text-foreground mb-1">No searches yet</h3>
+              <h3 className="text-base font-medium text-foreground mb-1">No requests yet</h3>
               <p className="text-sm text-muted-foreground max-w-sm">
-                Enter part numbers above to search and fetch product data from Boeing Commerce Connect.
+                Enter part numbers above to fetch product data from Boeing.
               </p>
             </div>
           )}
 
           {/* Batch Cards */}
           <div className="space-y-3">
-            {activeBatches.slice(0, 10).map(batch => {
+            {activeBatches
+              // Show all pipeline batches (search, normalized, publishing)
+              // Filter out old-style standalone "publish" batches (legacy)
+              .filter(batch => ['search', 'normalized', 'publishing'].includes(batch.batch_type))
+              .slice(0, 10)
+              .map(batch => {
               const hasProducts = batchProducts[batch.id] && batchProducts[batch.id].length > 0;
+              // Count only products that can be published:
+              // - Not already published
+              // - Has inventory > 0
+              // - Has a price > 0 (price, net_price, or cost_per_item)
               const unpublishedCount = hasProducts
-                ? batchProducts[batch.id].filter(p => p.status !== 'published').length
+                ? batchProducts[batch.id].filter(p => {
+                    if (p.status === 'published') return false;
+                    const hasInventory = p.inventory !== null && p.inventory !== undefined && p.inventory > 0;
+                    const hasPrice = (p.price !== null && p.price !== undefined && p.price > 0) ||
+                                     (p.net_price !== null && p.net_price !== undefined && p.net_price > 0) ||
+                                     (p.cost_per_item !== null && p.cost_per_item !== undefined && p.cost_per_item > 0);
+                    return hasInventory && hasPrice;
+                  }).length
                 : 0;
 
               return (
@@ -434,8 +512,8 @@ export function SearchPanel({
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         {getStatusIcon(batch.status)}
-                        <span className="text-sm font-medium capitalize">
-                          {batch.batch_type}
+                        <span className="text-sm font-medium">
+                          {formatBatchType(batch.batch_type, batch.status)}
                         </span>
                         <span className={cn(
                           "text-xs px-2 py-0.5 rounded-full font-medium",
@@ -496,61 +574,56 @@ export function SearchPanel({
                         ) : (
                           <span>Published: <span className="font-medium text-foreground">{batch.published_count}</span></span>
                         )}
-                        {batch.failed_count > 0 && (
-                          <span className="text-destructive">
-                            Failed: <span className="font-medium">{batch.failed_count}</span>
-                          </span>
-                        )}
                       </div>
                       <span className="font-medium text-foreground">
                         {batch.progress_percent.toFixed(0)}%
                       </span>
                     </div>
+
                   </div>
 
-                  {/* Action Buttons for completed search batches */}
-                  {batch.status === 'completed' && batch.batch_type === 'search' && batch.normalized_count > 0 && (
+                  {/* Action Buttons - visible throughout pipeline (search, normalized, publishing) */}
+                  {(batch.normalized_count > 0 || batch.batch_type === 'publishing') && (
                     <div className="px-4 py-2 border-t border-border bg-muted/30 flex items-center gap-2">
+                      {/* Toggle button: Load Products / Hide */}
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleLoadBatchProducts(batch.id)}
+                        onClick={() => {
+                          if (hasProducts) {
+                            handleClearBatchProducts(batch.id);
+                          } else {
+                            handleLoadBatchProducts(batch.id);
+                          }
+                        }}
                         disabled={loadingBatches.has(batch.id)}
                         className="h-8 text-xs"
                       >
                         {loadingBatches.has(batch.id) ? (
                           <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                        ) : hasProducts ? (
+                          <ChevronUp className="h-3 w-3 mr-1.5" />
                         ) : (
                           <Download className="h-3 w-3 mr-1.5" />
                         )}
-                        Load Products ({batch.normalized_count})
+                        {hasProducts ? 'Hide' : `Load Products (${batch.normalized_count})`}
                       </Button>
-                      {hasProducts && (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleClearBatchProducts(batch.id)}
-                            className="h-8 text-xs"
-                          >
-                            <ChevronUp className="h-3 w-3 mr-1.5" />
-                            Hide
-                          </Button>
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => handleBulkPublishBatch(batch.id)}
-                            disabled={publishingBatches.has(batch.id) || unpublishedCount === 0}
-                            className="h-8 text-xs"
-                          >
-                            {publishingBatches.has(batch.id) ? (
-                              <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                            ) : (
-                              <Upload className="h-3 w-3 mr-1.5" />
-                            )}
-                            Publish All ({unpublishedCount})
-                          </Button>
-                        </>
+                      {/* Only show Publish All button for completed search/normalized batches, not during publishing */}
+                      {hasProducts && batch.status === 'completed' && ['search', 'normalized'].includes(batch.batch_type) && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => handleBulkPublishBatch(batch.id)}
+                          disabled={publishingBatches.has(batch.id) || unpublishedCount === 0}
+                          className="h-8 text-xs"
+                        >
+                          {publishingBatches.has(batch.id) ? (
+                            <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                          ) : (
+                            <Upload className="h-3 w-3 mr-1.5" />
+                          )}
+                          Publish All ({unpublishedCount})
+                        </Button>
                       )}
                     </div>
                   )}
@@ -562,6 +635,7 @@ export function SearchPanel({
                         products={batchProducts[batch.id]}
                         selectedProduct={selectedProducts[batch.id] || null}
                         actionLoading={actionLoading}
+                        batchId={batch.id}
                         onSelectProduct={(product) => handleSelectProduct(batch.id, product)}
                         onEditProduct={onEditProduct}
                         onPublishProduct={onPublishProduct}
@@ -569,27 +643,112 @@ export function SearchPanel({
                     </div>
                   )}
 
-                  {/* Expanded Details */}
+                  {/* Expanded Details - Pipeline Tracking */}
                   {expandedBatches.has(batch.id) && (
-                    <div className="px-4 py-3 border-t border-border bg-muted/20 space-y-3">
+                    <div className="px-4 py-3 border-t border-border bg-muted/20 space-y-4">
+                      {/* Batch ID */}
                       <div className="text-xs">
                         <span className="text-muted-foreground">Batch ID: </span>
                         <span className="font-mono text-foreground">{batch.id}</span>
                       </div>
 
-                      {/* Pipeline Tracking - Part Numbers */}
+                      {/* Pipeline Summary Cards */}
+                      {(() => {
+                        // Calculate not queued count (extracted but not in publish queue)
+                        // Strip variant suffix before comparing (e.g., "WF338109=K3" -> "WF338109")
+                        const publishedStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
+                        // Only show skipped count for publishing batches that have publish_part_numbers populated
+                        const notQueuedCount = batch.batch_type === 'publishing' &&
+                          batch.part_numbers &&
+                          batch.publish_part_numbers &&
+                          batch.publish_part_numbers.length > 0
+                          ? batch.part_numbers.filter(pn => !publishedStripped.includes(stripVariantSuffix(pn))).length
+                          : 0;
+                        return (
+                          <div className="grid grid-cols-4 gap-3">
+                            {/* Extracted/Searched */}
+                            <div className="bg-background rounded-lg border p-3">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="h-2.5 w-2.5 rounded-full bg-slate-400" />
+                                <span className="text-xs font-medium text-foreground">Extracted</span>
+                              </div>
+                              <div className="text-2xl font-bold text-foreground">
+                                {batch.part_numbers?.length || 0}
+                              </div>
+                              <div className="text-xs text-muted-foreground">part numbers fetched</div>
+                            </div>
+
+                            {/* Published */}
+                            <div className="bg-background rounded-lg border p-3">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                                <span className="text-xs font-medium text-foreground">Published</span>
+                              </div>
+                              <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                                {batch.published_count}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {batch.publish_part_numbers?.length
+                                  ? `of ${batch.publish_part_numbers.length} queued`
+                                  : 'to Shopify'}
+                              </div>
+                            </div>
+
+                            {/* Failed (Shopify errors) */}
+                            <div className="bg-background rounded-lg border p-3">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
+                                <span className="text-xs font-medium text-foreground">Failed</span>
+                              </div>
+                              <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+                                {batch.failed_count}
+                              </div>
+                              <div className="text-xs text-muted-foreground">Shopify errors</div>
+                            </div>
+
+                            {/* Not Queued (no inventory/price) */}
+                            <div className="bg-background rounded-lg border p-3">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                                <span className="text-xs font-medium text-foreground">Skipped</span>
+                              </div>
+                              <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                                {notQueuedCount}
+                              </div>
+                              <div className="text-xs text-muted-foreground">no inventory/price</div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Extracted Part Numbers Section */}
                       {batch.part_numbers && batch.part_numbers.length > 0 && (
                         <div className="text-xs">
                           <div className="flex items-center gap-2 mb-2">
-                            <Package className="h-3.5 w-3.5 text-muted-foreground" />
+                            <Package className="h-3.5 w-3.5 text-slate-500" />
                             <span className="font-medium text-foreground">
-                              Part Numbers in Pipeline ({batch.part_numbers.length})
+                              Extracted Part Numbers ({batch.part_numbers.length})
                             </span>
                           </div>
-                          <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto p-2 bg-background rounded border">
+                          <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border">
                             {batch.part_numbers.map((pn, idx) => {
-                              // Determine status of this part number
-                              const isFailed = batch.failed_items?.some(f => f.part_number === pn);
+                              // Strip variant suffix for comparison (e.g., "WF338109=K3" -> "WF338109")
+                              const pnStripped = stripVariantSuffix(pn);
+                              const publishStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
+                              const failedStripped = batch.failed_items?.map(f => stripVariantSuffix(f.part_number)) || [];
+
+                              // For publishing batches: ALL extracted parts should show green
+                              // because extraction and normalization are complete at that stage
+                              // Real-time status updates only affect the "Publishing to Shopify" section
+                              const isPublishingStage = batch.batch_type === 'publishing';
+
+                              const isFailed = failedStripped.includes(pnStripped);
+                              const isQueued = publishStripped.includes(pnStripped);
+
+                              // In publishing stage, all parts are "extracted/normalized" (green)
+                              // In search/normalized stage, show queued parts as blue
+                              const isExtracted = isPublishingStage || batch.batch_type === 'normalized';
+
                               return (
                                 <span
                                   key={idx}
@@ -597,12 +756,13 @@ export function SearchPanel({
                                     "font-mono px-2 py-0.5 rounded text-xs",
                                     isFailed
                                       ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                      : batch.status === 'completed'
+                                      : isExtracted
                                         ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                                        : batch.status === 'processing'
+                                        : isQueued
                                           ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
                                           : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
                                   )}
+                                  title={isFailed ? 'Failed' : isExtracted ? 'Extracted & Normalized' : isQueued ? 'Queued for publishing' : 'Fetched'}
                                 >
                                   {pn}
                                 </span>
@@ -611,6 +771,113 @@ export function SearchPanel({
                           </div>
                         </div>
                       )}
+
+                      {/* Published/Publishing Part Numbers Section */}
+                      {batch.publish_part_numbers && batch.publish_part_numbers.length > 0 && (() => {
+                        // Get real-time product statuses from batchProducts
+                        const loadedProducts = batchProducts[batch.id] || [];
+                        const getProductStatus = (partNumber: string) => {
+                          const pnStripped = stripVariantSuffix(partNumber);
+                          const product = loadedProducts.find(p =>
+                            stripVariantSuffix(p.sku) === pnStripped || p.sku === partNumber
+                          );
+                          return product?.status;
+                        };
+
+                        // Count actually published items using real-time status
+                        const publishedCount = loadedProducts.length > 0
+                          ? batch.publish_part_numbers.filter(pn => getProductStatus(pn) === 'published').length
+                          : batch.publish_part_numbers.filter(pn =>
+                              !batch.failed_items?.some(f => f.part_number === pn)
+                            ).length;
+
+                        return (
+                        <div className="text-xs">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Upload className={cn(
+                              "h-3.5 w-3.5",
+                              batch.batch_type === 'publishing' && batch.status === 'processing'
+                                ? "text-blue-500"
+                                : "text-emerald-500"
+                            )} />
+                            <span className="font-medium text-foreground">
+                              {batch.batch_type === 'publishing' && batch.status === 'processing'
+                                ? 'Publishing to Shopify'
+                                : 'Published to Shopify'
+                              } ({publishedCount} of {batch.publish_part_numbers.length})
+                              {batch.batch_type === 'publishing' && batch.status === 'processing' && (
+                                <Loader2 className="h-3 w-3 ml-1.5 inline animate-spin" />
+                              )}
+                            </span>
+                          </div>
+                          <div className={cn(
+                            "flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border",
+                            batch.batch_type === 'publishing' && batch.status === 'processing'
+                              ? "border-blue-200 dark:border-blue-800"
+                              : "border-emerald-200 dark:border-emerald-800"
+                          )}>
+                            {batch.publish_part_numbers.map((pn, idx) => {
+                              const isFailed = batch.failed_items?.some(f => f.part_number === pn);
+                              // Use real-time product status if available
+                              const productStatus = getProductStatus(pn);
+                              const isPublishedRealtime = productStatus === 'published';
+                              const isPublishing = !isPublishedRealtime && !isFailed &&
+                                batch.batch_type === 'publishing' && batch.status === 'processing';
+                              return (
+                                <span
+                                  key={idx}
+                                  className={cn(
+                                    "font-mono px-2 py-0.5 rounded text-xs",
+                                    isFailed
+                                      ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 line-through"
+                                      : isPublishedRealtime
+                                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                        : isPublishing
+                                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                  )}
+                                  title={isFailed ? 'Failed to publish' : isPublishing ? 'Publishing...' : 'Successfully published'}
+                                >
+                                  {pn}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        );
+                      })()}
+
+                      {/* Not Published Section - Part numbers that were extracted but not queued for publishing */}
+                      {batch.part_numbers && batch.publish_part_numbers && batch.batch_type === 'publishing' && (() => {
+                        // Strip variant suffix for comparison (e.g., "WF338109=K3" -> "WF338109")
+                        const publishStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
+                        const notPublished = batch.part_numbers.filter(pn =>
+                          !publishStripped.includes(stripVariantSuffix(pn))
+                        );
+                        if (notPublished.length === 0) return null;
+                        return (
+                          <div className="text-xs">
+                            <div className="flex items-center gap-2 mb-2">
+                              <XCircle className="h-3.5 w-3.5 text-amber-500" />
+                              <span className="font-medium text-foreground">
+                                Not Queued for Publishing ({notPublished.length})
+                              </span>
+                              <span className="text-muted-foreground">(no inventory or price)</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border border-amber-200 dark:border-amber-800">
+                              {notPublished.map((pn, idx) => (
+                                <span
+                                  key={idx}
+                                  className="font-mono px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                                  title="Not queued - missing inventory or price"
+                                >
+                                  {pn}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Error Message */}
                       {batch.error_message && (
@@ -625,11 +892,11 @@ export function SearchPanel({
                         </div>
                       )}
 
-                      {/* Failed Items - Enhanced Display */}
+                      {/* Failed Items Table - with detailed error messages */}
                       {batch.failed_items && batch.failed_items.length > 0 && (
                         <div className="text-xs">
                           <div className="flex items-center gap-2 mb-2">
-                            <XCircle className="h-3.5 w-3.5 text-destructive" />
+                            <AlertCircle className="h-3.5 w-3.5 text-destructive" />
                             <span className="font-medium text-destructive">
                               Failed Items ({batch.failed_items.length})
                             </span>
@@ -640,7 +907,7 @@ export function SearchPanel({
                                 <thead className="bg-destructive/10 sticky top-0">
                                   <tr>
                                     <th className="text-left px-3 py-1.5 font-medium text-destructive">Part Number</th>
-                                    <th className="text-left px-3 py-1.5 font-medium text-destructive">Error</th>
+                                    <th className="text-left px-3 py-1.5 font-medium text-destructive">Reason</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-destructive/10">

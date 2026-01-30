@@ -25,7 +25,7 @@ interface UseBulkOperationsReturn {
 
   // Actions
   startBulkSearchOperation: (partNumbersText: string, idempotencyKey?: string) => Promise<BulkOperationResponse | null>;
-  startBulkPublishOperation: (partNumbersText: string, idempotencyKey?: string) => Promise<BulkOperationResponse | null>;
+  startBulkPublishOperation: (partNumbersText: string, idempotencyKey?: string, batchId?: string) => Promise<BulkOperationResponse | null>;
   cancelBatchOperation: (batchId: string) => Promise<boolean>;
   refreshBatches: (status?: string) => Promise<void>;
   setStatusFilter: (status: string | null) => void;
@@ -139,9 +139,11 @@ export function useBulkOperations(): UseBulkOperationsReturn {
   }, []);
 
   // Start a bulk publish operation
+  // If batchId is provided, uses the existing batch instead of creating a new one
   const startBulkPublishOperation = useCallback(async (
     partNumbersText: string,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    batchId?: string
   ): Promise<BulkOperationResponse | null> => {
     const partNumbers = parsePartNumbers(partNumbersText);
     if (partNumbers.length === 0) {
@@ -156,6 +158,7 @@ export function useBulkOperations(): UseBulkOperationsReturn {
       const response = await startBulkPublish({
         part_numbers: partNumbers,
         idempotency_key: idempotencyKey,
+        batch_id: batchId,
       });
 
       // Realtime will automatically update the batches list
@@ -197,6 +200,23 @@ export function useBulkOperations(): UseBulkOperationsReturn {
   useEffect(() => {
     refreshBatches();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll for updates when there are active batches (fallback for realtime)
+  useEffect(() => {
+    const hasActiveBatches = activeBatches.some(
+      b => b.status === 'pending' || b.status === 'processing'
+    );
+
+    if (!hasActiveBatches) return;
+
+    // Poll every 3 seconds when there are active batches
+    const pollInterval = setInterval(() => {
+      console.log('[useBulkOperations] Polling for batch updates...');
+      refreshBatches();
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, [activeBatches, refreshBatches]);
 
   const clearError = useCallback(() => {
     setError(null);
