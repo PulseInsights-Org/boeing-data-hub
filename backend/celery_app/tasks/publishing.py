@@ -24,6 +24,7 @@ from celery_app.tasks.base import (
     get_batch_store
 )
 from app.core.exceptions import RetryableError, NonRetryableError
+from app.db.sync_store import get_sync_store
 
 logger = logging.getLogger(__name__)
 
@@ -229,10 +230,28 @@ def publish_product(self, batch_id: str, part_number: str, user_id: str = "syste
                 logger.error(f"DB save failed after Shopify UPDATE for {part_number}: {db_err}")
             raise db_err
 
-        # 6. Update batch progress
-        batch_store.increment_published(batch_id)
+        # 6. Note: published_count is updated by database trigger on products table upsert
 
-        # 7. Check if batch is complete
+        # 7. Create/update sync schedule for daily Boeing sync (for ALL published products)
+        try:
+            sync_store = get_sync_store()
+            initial_price = record.get("list_price") or record.get("net_price")
+            initial_quantity = record.get("inventory_quantity")
+            # Use sku from record which now stores full SKU with variant suffix
+            full_sku = record.get("sku") or record.get("aviall_part_number") or part_number
+            sync_store.upsert_sync_schedule(
+                sku=full_sku,  # Full SKU for Boeing API queries
+                user_id=user_id,
+                initial_price=initial_price,
+                initial_quantity=initial_quantity,
+                shopify_product_id=str(shopify_product_id)
+            )
+            logger.info(f"{'Created' if is_new_product else 'Updated'} sync schedule for {full_sku}")
+        except Exception as sync_err:
+            # Don't fail the publish if sync schedule creation fails
+            logger.warning(f"Failed to upsert sync schedule for {part_number}: {sync_err}")
+
+        # 8. Check if batch is complete
         from celery_app.tasks.batch import check_batch_completion
         check_batch_completion.delay(batch_id)
 
@@ -284,12 +303,23 @@ def publish_product(self, batch_id: str, part_number: str, user_id: str = "syste
         raise
 
 
+def _strip_variant_suffix(value: str) -> str:
+    """Strip variant suffix from SKU (e.g., 'WF338109=K3' -> 'WF338109')."""
+    if not value:
+        return ""
+    return value.split("=", 1)[0]
+
+
 def _prepare_shopify_record(record: Dict[str, Any]) -> Dict[str, Any]:
     """
     Prepare record with Shopify-specific fields.
 
     Transforms normalized Boeing data to Shopify product format.
     Includes pricing calculation (10% markup on list price).
+
+    IMPORTANT: Strips variant suffix from SKU and title for Shopify display.
+    Database stores full SKU (e.g., "WF338109=K3"), but Shopify shows
+    stripped version (e.g., "WF338109").
 
     Args:
         record: Normalized product record from staging
@@ -305,10 +335,14 @@ def _prepare_shopify_record(record: Dict[str, Any]) -> Dict[str, Any]:
     base_cost = list_price if list_price is not None else net_price
     shop_price = (base_cost * 1.1) if base_cost is not None else record.get("price")
 
+    # Strip variant suffix from SKU and title for Shopify display
+    shopify_sku = _strip_variant_suffix(record.get("sku") or "")
+    shopify_title = _strip_variant_suffix(record.get("title") or "")
+
     record["shopify"].update({
-        "title": record.get("title"),
-        "sku": record.get("sku"),
-        "description": record.get("boeing_name") or record.get("title"),
+        "title": shopify_title,
+        "sku": shopify_sku,
+        "description": record.get("boeing_name") or shopify_title,
         "body_html": record.get("body_html") or "",
         "vendor": record.get("vendor"),
         "manufacturer": record.get("supplier_name") or record.get("vendor"),
@@ -336,7 +370,8 @@ def _prepare_shopify_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "notes": record.get("notes"),
     })
 
-    record["name"] = record.get("boeing_name") or record.get("title")
+    # Use stripped title for display name
+    record["name"] = record.get("boeing_name") or shopify_title
     record["description"] = record.get("boeing_description") or ""
 
     return record

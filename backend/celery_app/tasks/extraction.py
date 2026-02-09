@@ -135,8 +135,7 @@ def extract_chunk(
             )
         )
 
-        # Update extraction progress
-        batch_store.increment_extracted(batch_id, len(part_numbers))
+        # Note: extracted_count is updated by database trigger on boeing_raw_data insert
 
         # Chain to normalization with user_id
         from celery_app.tasks.normalization import normalize_chunk

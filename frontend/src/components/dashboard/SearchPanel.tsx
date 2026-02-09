@@ -22,7 +22,12 @@ import { Progress } from '@/components/ui/progress';
 import { BatchStatusResponse, BatchStatus, NormalizedProduct, ProductStatus } from '@/types/product';
 import { ProductTable } from './ProductTable';
 import { cn } from '@/lib/utils';
-import { subscribeToAllStagingUpdates, unsubscribe } from '@/services/realtimeService';
+import {
+  subscribeToAllStagingUpdates,
+  unsubscribe,
+  fetchBatchPartNumberStatuses,
+  PartNumberStatus,
+} from '@/services/realtimeService';
 
 type StatusFilter = 'all' | 'active' | 'completed' | 'failed' | 'cancelled';
 
@@ -81,11 +86,83 @@ export function SearchPanel({
   const [loadingBatches, setLoadingBatches] = useState<Set<string>>(new Set());
   const [publishingBatches, setPublishingBatches] = useState<Set<string>>(new Set());
   const [selectedProducts, setSelectedProducts] = useState<Record<string, NormalizedProduct | null>>({});
+  // Track which product tables are hidden (but data still loaded for real-time tag updates)
+  const [hiddenProductTables, setHiddenProductTables] = useState<Set<string>>(new Set());
+  // Part number statuses fetched from RPC for accurate display
+  const [batchPartNumberStatuses, setBatchPartNumberStatuses] = useState<Record<string, PartNumberStatus[]>>({});
+  const [loadingStatuses, setLoadingStatuses] = useState<Set<string>>(new Set());
 
   // Realtime subscription reference for product_staging updates
   const stagingChannelRef = useRef<RealtimeChannel | null>(null);
 
-  // Handle realtime product_staging updates
+  // Handle realtime product_staging INSERT (new products extracted)
+  const handleStagingProductInsert = useCallback((newProduct: any) => {
+    const batchId = newProduct.batch_id;
+    if (!batchId) return;
+
+    // Only add to batchProducts if this batch has products loaded (user has expanded it)
+    setBatchProducts(prev => {
+      // Check if we have this batch loaded
+      if (!prev[batchId]) {
+        // Batch not loaded, skip - products will be loaded when user expands
+        return prev;
+      }
+
+      // Check if product already exists (avoid duplicates)
+      const existingIndex = prev[batchId].findIndex(
+        p => p.sku === newProduct.sku || p.id === newProduct.id
+      );
+      if (existingIndex >= 0) {
+        return prev; // Already exists, don't add again
+      }
+
+      // Transform the realtime product to match NormalizedProduct format
+      const normalizedProduct: NormalizedProduct = {
+        id: newProduct.id || newProduct.sku,
+        name: newProduct.title || newProduct.sku || '',
+        description: newProduct.body_html || '',
+        partNumber: newProduct.sku || newProduct.id || '',
+        manufacturer: newProduct.vendor || '',
+        distrSrc: newProduct.vendor || '',
+        pnAUrl: '',
+        length: newProduct.dim_length ?? null,
+        width: newProduct.dim_width ?? null,
+        height: newProduct.dim_height ?? null,
+        dimensionUom: newProduct.dim_uom || '',
+        weight: newProduct.weight ?? null,
+        weightUnit: newProduct.weight_unit || '',
+        rawBoeingData: {},
+        price: newProduct.price ?? null,
+        inventory: newProduct.inventory_quantity ?? null,
+        availability: newProduct.inventory_status ?? null,
+        currency: newProduct.currency || 'USD',
+        status: (newProduct.status as ProductStatus) || 'fetched',
+        title: newProduct.title || newProduct.sku || '',
+        lastModified: newProduct.updated_at || newProduct.created_at || new Date().toISOString(),
+        sku: newProduct.sku,
+        vendor: newProduct.vendor || '',
+        net_price: newProduct.net_price,
+        cost_per_item: newProduct.cost_per_item,
+        inventory_quantity: newProduct.inventory_quantity,
+        inventory_status: newProduct.inventory_status,
+        weight_uom: newProduct.weight_unit,
+        country_of_origin: newProduct.country_of_origin,
+        dim_length: newProduct.dim_length,
+        dim_width: newProduct.dim_width,
+        dim_height: newProduct.dim_height,
+        dim_uom: newProduct.dim_uom,
+      };
+
+      console.log('[SearchPanel] Product inserted via realtime:', newProduct.sku, 'to batch:', batchId);
+
+      return {
+        ...prev,
+        [batchId]: [...prev[batchId], normalizedProduct],
+      };
+    });
+  }, []);
+
+  // Handle realtime product_staging UPDATE (status changes)
   const handleStagingProductUpdate = useCallback((updatedProduct: any) => {
     // Update the product in all batch products where it exists
     setBatchProducts(prev => {
@@ -111,7 +188,7 @@ export function SearchPanel({
             ...(updatedProduct.cost_per_item !== undefined && { cost_per_item: updatedProduct.cost_per_item }),
             ...(updatedProduct.inventory_quantity !== undefined && { inventory: updatedProduct.inventory_quantity }),
             ...(updatedProduct.weight !== undefined && { weight: updatedProduct.weight }),
-            ...(updatedProduct.body_html && { body_html: updatedProduct.body_html }),
+            ...(updatedProduct.body_html && { description: updatedProduct.body_html }),
             ...(updatedProduct.vendor && { vendor: updatedProduct.vendor }),
             ...(updatedProduct.condition && { condition: updatedProduct.condition }),
             ...(updatedProduct.base_uom && { base_uom: updatedProduct.base_uom }),
@@ -136,11 +213,14 @@ export function SearchPanel({
   }, []);
 
   // Set up Supabase Realtime subscription for product_staging updates
+  // Subscribe when we have ANY expanded batches (not just loaded products)
+  // This ensures real-time updates work during extraction when products are being inserted
   useEffect(() => {
+    const hasExpandedBatches = expandedBatches.size > 0;
     const hasLoadedProducts = Object.keys(batchProducts).length > 0;
 
-    if (!hasLoadedProducts) {
-      // Clean up subscription if no products loaded
+    if (!hasExpandedBatches && !hasLoadedProducts) {
+      // Clean up subscription if no expanded batches or loaded products
       if (stagingChannelRef.current) {
         unsubscribe(stagingChannelRef.current);
         stagingChannelRef.current = null;
@@ -148,10 +228,13 @@ export function SearchPanel({
       return;
     }
 
-    // Only subscribe if we have products and not already subscribed
+    // Only subscribe if we have expanded batches/products and not already subscribed
     if (!stagingChannelRef.current) {
-      console.log('[SearchPanel] Setting up Realtime subscription for product_staging');
-      stagingChannelRef.current = subscribeToAllStagingUpdates(handleStagingProductUpdate);
+      console.log('[SearchPanel] Setting up Realtime subscription for product_staging (INSERT + UPDATE)');
+      stagingChannelRef.current = subscribeToAllStagingUpdates(
+        handleStagingProductUpdate,
+        handleStagingProductInsert
+      );
     }
 
     return () => {
@@ -161,7 +244,35 @@ export function SearchPanel({
         stagingChannelRef.current = null;
       }
     };
-  }, [batchProducts, handleStagingProductUpdate]);
+  }, [expandedBatches, batchProducts, handleStagingProductUpdate, handleStagingProductInsert]);
+
+  // Periodic refresh for expanded processing batches
+  // This ensures real-time sync during extraction even if some INSERT events are missed
+  useEffect(() => {
+    const expandedProcessingBatches = activeBatches.filter(
+      b => expandedBatches.has(b.id) &&
+           (b.status === 'pending' || b.status === 'processing') &&
+           batchProducts[b.id] // Only refresh if products are already loaded
+    );
+
+    if (expandedProcessingBatches.length === 0) return;
+
+    // Refresh products every 3 seconds for processing batches
+    const refreshInterval = setInterval(() => {
+      expandedProcessingBatches.forEach(batch => {
+        if (!loadingBatches.has(batch.id)) {
+          console.log('[SearchPanel] Periodic refresh for processing batch:', batch.id);
+          onLoadBatchProducts(batch.id)
+            .then(products => {
+              setBatchProducts(prev => ({ ...prev, [batch.id]: products }));
+            })
+            .catch(err => console.error('[SearchPanel] Periodic refresh error:', err));
+        }
+      });
+    }, 3000);
+
+    return () => clearInterval(refreshInterval);
+  }, [activeBatches, expandedBatches, batchProducts, loadingBatches, onLoadBatchProducts]);
 
   const partNumberCount = partNumbersText
     .split(/[,;\n\r]+/)
@@ -201,7 +312,27 @@ export function SearchPanel({
       delete next[batchId];
       return next;
     });
+    // Also clear hidden state for this batch
+    setHiddenProductTables(prev => {
+      const next = new Set(prev);
+      next.delete(batchId);
+      return next;
+    });
     onClearBatchProducts();
+  };
+
+  // Toggle product table visibility without clearing data
+  // This allows part number tags to continue updating via realtime
+  const handleToggleProductTableVisibility = (batchId: string) => {
+    setHiddenProductTables(prev => {
+      const next = new Set(prev);
+      if (next.has(batchId)) {
+        next.delete(batchId);
+      } else {
+        next.add(batchId);
+      }
+      return next;
+    });
   };
 
   const handleBulkPublishBatch = async (batchId: string) => {
@@ -234,7 +365,28 @@ export function SearchPanel({
     setSelectedProducts(prev => ({ ...prev, [batchId]: product }));
   };
 
-  const toggleBatchExpand = (batchId: string) => {
+  // Fetch part number statuses for a batch
+  const fetchPartNumberStatuses = useCallback(async (batchId: string) => {
+    if (loadingStatuses.has(batchId)) return;
+
+    setLoadingStatuses(prev => new Set(prev).add(batchId));
+    try {
+      const statuses = await fetchBatchPartNumberStatuses(batchId);
+      setBatchPartNumberStatuses(prev => ({ ...prev, [batchId]: statuses }));
+    } catch (err) {
+      console.error('[SearchPanel] Failed to fetch part number statuses:', err);
+    } finally {
+      setLoadingStatuses(prev => {
+        const next = new Set(prev);
+        next.delete(batchId);
+        return next;
+      });
+    }
+  }, [loadingStatuses]);
+
+  const toggleBatchExpand = async (batchId: string) => {
+    const isCurrentlyExpanded = expandedBatches.has(batchId);
+
     setExpandedBatches(prev => {
       const next = new Set(prev);
       if (next.has(batchId)) {
@@ -244,6 +396,23 @@ export function SearchPanel({
       }
       return next;
     });
+
+    if (isCurrentlyExpanded) {
+      // Collapsing: Clear products and hidden state to free memory
+      handleClearBatchProducts(batchId);
+    } else {
+      // Expanding: Auto-load products (if not already loaded)
+      // This enables real-time tag updates via the realtime subscription
+      if (!batchProducts[batchId] && !loadingBatches.has(batchId)) {
+        await handleLoadBatchProducts(batchId);
+      }
+      // Also clear hidden state when expanding (show table by default)
+      setHiddenProductTables(prev => {
+        const next = new Set(prev);
+        next.delete(batchId);
+        return next;
+      });
+    }
   };
 
   const getStatusIcon = (status: BatchStatus) => {
@@ -285,33 +454,57 @@ export function SearchPanel({
   };
 
   // Format batch type for display - shows pipeline stage with status awareness
-  const formatBatchType = (batchType: string, status: BatchStatus) => {
-    // When completed, show past-tense labels
-    if (status === 'completed') {
-      switch (batchType) {
-        case 'search':
-          return 'Fetched';
-        case 'normalized':
-          return 'Normalized -> Ready to Publish';
-        case 'publishing':
-          return 'Published';
-        case 'publish':
-          return 'Published';
-        default:
-          return batchType;
-      }
-    }
-
-    // For active/in-progress states
+  // batch_type = pipeline stage: 'search' (extraction+normalization), 'normalized' (ready for publish), 'publishing'
+  // status = workflow state: 'pending', 'processing', 'completed', 'failed', 'cancelled'
+  // Also considers counts to show accurate labels (e.g., "Partially Normalized" when not all items extracted)
+  const formatBatchType = (
+    batchType: string,
+    status: BatchStatus,
+    counts?: { total: number; extracted: number; normalized: number; published: number }
+  ) => {
+    // Handle each batch_type with its possible statuses
     switch (batchType) {
       case 'search':
+        // Search stage: extraction + normalization in progress
+        if (status === 'pending') return 'Fetch Pending';
+        if (status === 'processing') return 'Fetching';
+        if (status === 'completed') return 'Fetched & Normalized';
+        if (status === 'failed') return 'Fetch Failed';
+        if (status === 'cancelled') return 'Fetch Cancelled';
         return 'Fetching';
+
       case 'normalized':
-        return 'Normalizing';
+        // Normalized stage: extraction complete, ready for publishing
+        // Check if all items were successfully normalized
+        if (counts && counts.normalized < counts.total) {
+          // Partial completion - not all items were normalized
+          if (status === 'completed') return 'Fetching & Normalizing';
+          if (status === 'failed') return 'Normalization Failed';
+          if (status === 'cancelled') return 'Cancelled';
+          return 'Fetching & Normalizing';
+        }
+        // Full completion
+        if (status === 'completed') return 'Normalized \u2192 Ready to Publish';
+        if (status === 'failed') return 'Normalization Failed';
+        if (status === 'cancelled') return 'Cancelled';
+        return 'Normalized \u2192 Ready to Publish';
+
       case 'publishing':
-        return 'Publishing';
       case 'publish':
+        // Publishing stage: pushing to Shopify
+        if (status === 'pending') return 'Publish Pending';
+        if (status === 'processing') return 'Publishing';
+        if (status === 'completed') {
+          // Check if all items were published
+          if (counts && counts.published < counts.normalized) {
+            return 'Published';
+          }
+          return 'Published';
+        }
+        if (status === 'failed') return 'Publish Failed';
+        if (status === 'cancelled') return 'Publish Cancelled';
         return 'Publishing';
+
       default:
         return batchType;
     }
@@ -513,7 +706,12 @@ export function SearchPanel({
                       <div className="flex items-center gap-2">
                         {getStatusIcon(batch.status)}
                         <span className="text-sm font-medium">
-                          {formatBatchType(batch.batch_type, batch.status)}
+                          {formatBatchType(batch.batch_type, batch.status, {
+                            total: batch.total_items,
+                            extracted: batch.extracted_count,
+                            normalized: batch.normalized_count,
+                            published: batch.published_count,
+                          })}
                         </span>
                         <span className={cn(
                           "text-xs px-2 py-0.5 rounded-full font-medium",
@@ -562,16 +760,23 @@ export function SearchPanel({
                       />
                     </div>
 
-                    {/* Progress Stats */}
+                    {/* Progress Stats - shows relevant counts based on batch_type and status */}
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <div className="flex items-center gap-3">
                         <span>Total: <span className="font-medium text-foreground">{batch.total_items}</span></span>
-                        {batch.batch_type === 'search' ? (
+                        {batch.batch_type === 'search' && (
                           <>
                             <span>Extracted: <span className="font-medium text-foreground">{batch.extracted_count}</span></span>
                             <span>Normalized: <span className="font-medium text-foreground">{batch.normalized_count}</span></span>
                           </>
-                        ) : (
+                        )}
+                        {batch.batch_type === 'normalized' && (
+                          <>
+                            <span>Extracted: <span className="font-medium text-foreground">{batch.extracted_count}</span></span>
+                            <span>Normalized: <span className="font-medium text-foreground">{batch.normalized_count}</span></span>
+                          </>
+                        )}
+                        {(batch.batch_type === 'publishing' || batch.batch_type === 'publish') && (
                           <span>Published: <span className="font-medium text-foreground">{batch.published_count}</span></span>
                         )}
                       </div>
@@ -585,29 +790,45 @@ export function SearchPanel({
                   {/* Action Buttons - visible throughout pipeline (search, normalized, publishing) */}
                   {(batch.normalized_count > 0 || batch.batch_type === 'publishing') && (
                     <div className="px-4 py-2 border-t border-border bg-muted/30 flex items-center gap-2">
-                      {/* Toggle button: Load Products / Hide */}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          if (hasProducts) {
-                            handleClearBatchProducts(batch.id);
-                          } else {
-                            handleLoadBatchProducts(batch.id);
-                          }
-                        }}
-                        disabled={loadingBatches.has(batch.id)}
-                        className="h-8 text-xs"
-                      >
-                        {loadingBatches.has(batch.id) ? (
-                          <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                        ) : hasProducts ? (
-                          <ChevronUp className="h-3 w-3 mr-1.5" />
-                        ) : (
-                          <Download className="h-3 w-3 mr-1.5" />
-                        )}
-                        {hasProducts ? 'Hide' : `Load Products (${batch.normalized_count})`}
-                      </Button>
+                      {/* Toggle button: Load Products / Show / Hide */}
+                      {(() => {
+                        const isTableHidden = hiddenProductTables.has(batch.id);
+                        const showTable = hasProducts && !isTableHidden;
+
+                        return (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              if (!hasProducts) {
+                                // No products loaded - load them
+                                handleLoadBatchProducts(batch.id);
+                              } else {
+                                // Products loaded - toggle visibility
+                                handleToggleProductTableVisibility(batch.id);
+                              }
+                            }}
+                            disabled={loadingBatches.has(batch.id)}
+                            className="h-8 text-xs"
+                          >
+                            {loadingBatches.has(batch.id) ? (
+                              <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                            ) : showTable ? (
+                              <ChevronUp className="h-3 w-3 mr-1.5" />
+                            ) : hasProducts && isTableHidden ? (
+                              <ChevronDown className="h-3 w-3 mr-1.5" />
+                            ) : (
+                              <Download className="h-3 w-3 mr-1.5" />
+                            )}
+                            {!hasProducts
+                              ? `Load Products (${batch.normalized_count})`
+                              : showTable
+                                ? 'Hide Table'
+                                : 'Show Table'
+                            }
+                          </Button>
+                        );
+                      })()}
                       {/* Only show Publish All button for completed search/normalized batches, not during publishing */}
                       {hasProducts && batch.status === 'completed' && ['search', 'normalized'].includes(batch.batch_type) && (
                         <Button
@@ -628,8 +849,8 @@ export function SearchPanel({
                     </div>
                   )}
 
-                  {/* Products Table */}
-                  {hasProducts && (
+                  {/* Products Table - hidden when user clicks "Hide Table" but data stays loaded */}
+                  {hasProducts && !hiddenProductTables.has(batch.id) && (
                     <div className="border-t border-border">
                       <ProductTable
                         products={batchProducts[batch.id]}
@@ -665,7 +886,7 @@ export function SearchPanel({
                           ? batch.part_numbers.filter(pn => !publishedStripped.includes(stripVariantSuffix(pn))).length
                           : 0;
                         return (
-                          <div className="grid grid-cols-4 gap-3">
+                          <div className="grid grid-cols-5 gap-3">
                             {/* Extracted/Searched */}
                             <div className="bg-background rounded-lg border p-3">
                               <div className="flex items-center gap-2 mb-2">
@@ -673,9 +894,25 @@ export function SearchPanel({
                                 <span className="text-xs font-medium text-foreground">Extracted</span>
                               </div>
                               <div className="text-2xl font-bold text-foreground">
-                                {batch.part_numbers?.length || 0}
+                                {batch.extracted_count}
                               </div>
-                              <div className="text-xs text-muted-foreground">part numbers fetched</div>
+                              <div className="text-xs text-muted-foreground">
+                                of {batch.total_items} requested
+                              </div>
+                            </div>
+
+                            {/* Normalized */}
+                            <div className="bg-background rounded-lg border p-3">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+                                <span className="text-xs font-medium text-foreground">Normalized</span>
+                              </div>
+                              <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                                {batch.normalized_count}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                of {batch.extracted_count} extracted
+                              </div>
                             </div>
 
                             {/* Published */}
@@ -709,10 +946,10 @@ export function SearchPanel({
                             {/* Not Queued (no inventory/price) */}
                             <div className="bg-background rounded-lg border p-3">
                               <div className="flex items-center gap-2 mb-2">
-                                <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                                <span className="h-2.5 w-2.5 rounded-full bg-orange-500" />
                                 <span className="text-xs font-medium text-foreground">Skipped</span>
                               </div>
-                              <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                              <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
                                 {notQueuedCount}
                               </div>
                               <div className="text-xs text-muted-foreground">no inventory/price</div>
@@ -721,48 +958,93 @@ export function SearchPanel({
                         );
                       })()}
 
-                      {/* Extracted Part Numbers Section */}
-                      {batch.part_numbers && batch.part_numbers.length > 0 && (
+                      {/* Extracted Part Numbers Section - Hidden during active publishing */}
+                      {!(batch.batch_type === 'publishing' && batch.status === 'processing') &&
+                        batch.part_numbers && batch.part_numbers.length > 0 && (() => {
+                        // Use batchProducts for real-time status updates (same approach as publishing section)
+                        const loadedProducts = batchProducts[batch.id] || [];
+                        const isLoading = loadingBatches.has(batch.id);
+
+                        // Helper to get product status from loaded products (real-time)
+                        const getProductStatus = (partNumber: string) => {
+                          const pnStripped = stripVariantSuffix(partNumber);
+                          const product = loadedProducts.find(p =>
+                            stripVariantSuffix(p.sku) === pnStripped || p.sku === partNumber
+                          );
+                          if (!product) return null;
+                          return {
+                            status: product.status || 'pending',
+                            has_inventory: (product.inventory ?? 0) > 0,
+                            has_price: (product.price ?? 0) > 0 || (product.net_price ?? 0) > 0 || (product.cost_per_item ?? 0) > 0
+                          };
+                        };
+
+                        // Count by status for the header (from real-time data)
+                        const extractedCount = loadedProducts.length > 0
+                          ? batch.part_numbers.filter(pn => {
+                              const ps = getProductStatus(pn);
+                              return ps && ps.status !== 'pending';
+                            }).length
+                          : batch.extracted_count; // Fallback to batch stats if products not loaded
+
+                        return (
                         <div className="text-xs">
                           <div className="flex items-center gap-2 mb-2">
                             <Package className="h-3.5 w-3.5 text-slate-500" />
                             <span className="font-medium text-foreground">
-                              Extracted Part Numbers ({batch.part_numbers.length})
+                              Part Numbers ({extractedCount > 0 ? `${extractedCount} extracted of ` : ''}{batch.part_numbers.length} requested)
                             </span>
+                            {isLoading && (
+                              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                            )}
                           </div>
                           <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border">
                             {batch.part_numbers.map((pn, idx) => {
-                              // Strip variant suffix for comparison (e.g., "WF338109=K3" -> "WF338109")
-                              const pnStripped = stripVariantSuffix(pn);
-                              const publishStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
-                              const failedStripped = batch.failed_items?.map(f => stripVariantSuffix(f.part_number)) || [];
+                              const productStatus = getProductStatus(pn);
 
-                              // For publishing batches: ALL extracted parts should show green
-                              // because extraction and normalization are complete at that stage
-                              // Real-time status updates only affect the "Publishing to Shopify" section
-                              const isPublishingStage = batch.batch_type === 'publishing';
+                              // Determine color based on actual status from real-time product data
+                              // pending = grey (not yet processed)
+                              // fetched = blue (extracted, being normalized)
+                              // normalized = amber (ready for publish) or green (if has inventory/price)
+                              // published = green (done)
+                              // failed = red
+                              const status = productStatus?.status || 'pending';
+                              const hasNoStock = productStatus && (!productStatus.has_inventory || !productStatus.has_price);
 
-                              const isFailed = failedStripped.includes(pnStripped);
-                              const isQueued = publishStripped.includes(pnStripped);
+                              let colorClass: string;
+                              let title: string;
 
-                              // In publishing stage, all parts are "extracted/normalized" (green)
-                              // In search/normalized stage, show queued parts as blue
-                              const isExtracted = isPublishingStage || batch.batch_type === 'normalized';
+                              switch (status) {
+                                case 'published':
+                                  colorClass = "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+                                  title = 'Published to Shopify';
+                                  break;
+                                case 'normalized':
+                                  colorClass = hasNoStock
+                                    ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                                    : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+                                  title = hasNoStock ? 'No inventory/price' : 'Ready to publish';
+                                  break;
+                                case 'fetched':
+                                  colorClass = "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+                                  title = 'Extracted, normalizing...';
+                                  break;
+                                case 'failed':
+                                  colorClass = "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+                                  title = 'Failed';
+                                  break;
+                                case 'pending':
+                                default:
+                                  colorClass = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
+                                  title = 'Waiting to be extracted';
+                                  break;
+                              }
 
                               return (
                                 <span
                                   key={idx}
-                                  className={cn(
-                                    "font-mono px-2 py-0.5 rounded text-xs",
-                                    isFailed
-                                      ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                      : isExtracted
-                                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                                        : isQueued
-                                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                          : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                                  )}
-                                  title={isFailed ? 'Failed' : isExtracted ? 'Extracted & Normalized' : isQueued ? 'Queued for publishing' : 'Fetched'}
+                                  className={cn("font-mono px-2 py-0.5 rounded text-xs", colorClass)}
+                                  title={title}
                                 >
                                   {pn}
                                 </span>
@@ -770,7 +1052,8 @@ export function SearchPanel({
                             })}
                           </div>
                         </div>
-                      )}
+                        );
+                      })()}
 
                       {/* Published/Publishing Part Numbers Section */}
                       {batch.publish_part_numbers && batch.publish_part_numbers.length > 0 && (() => {

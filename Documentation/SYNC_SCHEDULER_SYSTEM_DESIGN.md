@@ -1,0 +1,950 @@
+# Boeing Sync Scheduler - Complete System Design
+
+## Executive Summary
+
+This document describes the **Boeing Sync Scheduler** - a fully automated system that keeps published Shopify products synchronized with Boeing's pricing and availability data.
+
+### Core Problem
+- 5,000+ products listed on Shopify are dropshipped from Boeing
+- Boeing prices and stock levels change throughout the day
+- Shopify store must reflect these changes automatically
+- Boeing API has strict rate limits: **2 requests per minute, max 10 SKUs per request**
+
+### Design Philosophy: "Never Waste a Boeing API Call"
+Every Boeing API request should contain **exactly 10 SKUs** for maximum efficiency. The entire system architecture is built around this principle.
+
+---
+
+## Table of Contents
+
+1. [System Architecture Overview](#1-system-architecture-overview)
+2. [Component Breakdown](#2-component-breakdown)
+3. [Dynamic Slot Allocation Model](#3-dynamic-slot-allocation-model)
+4. [Token Bucket Rate Limiter](#4-token-bucket-rate-limiter)
+5. [Data Flow Diagrams](#5-data-flow-diagrams)
+6. [Database Schema](#6-database-schema)
+7. [Celery Task Definitions](#7-celery-task-definitions)
+8. [Failure Handling & Retries](#8-failure-handling--retries)
+9. [Scaling Analysis](#9-scaling-analysis)
+10. [Monitoring & Observability](#10-monitoring--observability)
+
+---
+
+## 1. System Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                           BOEING SYNC SCHEDULER ARCHITECTURE                             │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                          │
+│   ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│   │                              SCHEDULING LAYER                                     │  │
+│   │  ┌─────────────┐                                                                  │  │
+│   │  │ CELERY BEAT │  Triggers periodic tasks                                         │  │
+│   │  │  (Clock)    │  • Hourly sync dispatch (:00)                                    │  │
+│   │  │             │  • Retry dispatch (every 4h at :30)                              │  │
+│   │  │             │  • End-of-day cleanup (23:45)                                    │  │
+│   │  │             │  • Stuck reset (:55)                                             │  │
+│   │  └──────┬──────┘                                                                  │  │
+│   └─────────┼────────────────────────────────────────────────────────────────────────┘  │
+│             │                                                                            │
+│             ▼                                                                            │
+│   ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│   │                               MESSAGE BROKER                                      │  │
+│   │  ┌─────────────────────────────────────────────────────────────────────────────┐ │  │
+│   │  │                            REDIS                                             │ │  │
+│   │  │                                                                              │ │  │
+│   │  │  QUEUES:                         RATE LIMITER:                               │ │  │
+│   │  │  ┌──────────────┐                ┌────────────────────────────┐              │ │  │
+│   │  │  │ default      │                │ boeing:rate_limiter:tokens │              │ │  │
+│   │  │  │ sync_boeing  │                │ (Token Bucket Algorithm)   │              │ │  │
+│   │  │  │ sync_shopify │                │ 2 tokens/minute            │              │ │  │
+│   │  │  └──────────────┘                └────────────────────────────┘              │ │  │
+│   │  └─────────────────────────────────────────────────────────────────────────────┘ │  │
+│   └──────────────────────────────────────────────────────────────────────────────────┘  │
+│             │                                                                            │
+│             ▼                                                                            │
+│   ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│   │                              WORKER LAYER                                         │  │
+│   │                                                                                   │  │
+│   │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐                   │  │
+│   │  │ DISPATCHER      │  │ BOEING SYNC     │  │ SHOPIFY SYNC    │                   │  │
+│   │  │ WORKER          │  │ WORKER          │  │ WORKER          │                   │  │
+│   │  │                 │  │                 │  │                 │                   │  │
+│   │  │ • Hourly sync   │  │ • Acquires      │  │ • Updates       │                   │  │
+│   │  │ • Retry sync    │  │   rate token    │  │   Shopify       │                   │  │
+│   │  │ • EOD cleanup   │  │ • Calls Boeing  │  │   price/qty     │                   │  │
+│   │  │ • Batching      │  │   API (10 SKUs) │  │                 │                   │  │
+│   │  │                 │  │ • Detects       │  │ Rate: 30/min    │                   │  │
+│   │  │ Queue: default  │  │   changes       │  │ Queue: shopify  │                   │  │
+│   │  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘                   │  │
+│   └───────────┼────────────────────┼────────────────────┼────────────────────────────┘  │
+│               │                    │                    │                                │
+│               ▼                    ▼                    ▼                                │
+│   ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│   │                              EXTERNAL APIs                                        │  │
+│   │                                                                                   │  │
+│   │  ┌─────────────────────────────────┐  ┌─────────────────────────────────┐        │  │
+│   │  │         BOEING API              │  │         SHOPIFY API             │        │  │
+│   │  │  ───────────────────────────    │  │  ───────────────────────────    │        │  │
+│   │  │  Rate Limit: 2 calls/min        │  │  Rate Limit: ~40 calls/min      │        │  │
+│   │  │  Max SKUs: 10 per request       │  │  GraphQL Admin API              │        │  │
+│   │  │  Returns: price, qty, stock     │  │  Update variant + inventory     │        │  │
+│   │  └─────────────────────────────────┘  └─────────────────────────────────┘        │  │
+│   └──────────────────────────────────────────────────────────────────────────────────┘  │
+│               │                    │                    │                                │
+│               ▼                    ▼                    ▼                                │
+│   ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│   │                              DATA LAYER                                           │  │
+│   │                                                                                   │  │
+│   │  ┌─────────────────────────────────────────────────────────────────────────────┐ │  │
+│   │  │                      SUPABASE (PostgreSQL)                                  │ │  │
+│   │  │                                                                              │ │  │
+│   │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐           │ │  │
+│   │  │  │ product_sync_    │  │ product_staging  │  │ product          │           │ │  │
+│   │  │  │ schedule         │  │                  │  │                  │           │ │  │
+│   │  │  │                  │  │ • sku            │  │ • sku            │           │ │  │
+│   │  │  │ • hour_bucket    │  │ • price          │  │ • shopify_id     │           │ │  │
+│   │  │  │ • sync_status    │  │ • quantity       │  │ • price          │           │ │  │
+│   │  │  │ • last_sync_at   │  │ • shopify_id     │  │ • quantity       │           │ │  │
+│   │  │  │ • boeing_hash    │  │                  │  │                  │           │ │  │
+│   │  │  └──────────────────┘  └──────────────────┘  └──────────────────┘           │ │  │
+│   │  └─────────────────────────────────────────────────────────────────────────────┘ │  │
+│   └──────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                          │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Component Breakdown
+
+### 2.1 Celery Beat (Scheduler)
+
+| Task | Schedule | Purpose |
+|------|----------|---------|
+| `dispatch_hourly_sync` | Every hour at :00 | Process products for current hour bucket |
+| `dispatch_retry_sync` | Every 4h at :30 (3,7,11,15,19,23) | Retry failed products in batches |
+| `end_of_day_cleanup` | Daily at 23:45 | Process all remaining products |
+| `reset_stuck_syncing` | Every hour at :55 | Reset products stuck in 'syncing' |
+
+### 2.2 Redis Responsibilities
+
+| Key Pattern | Purpose | TTL |
+|-------------|---------|-----|
+| `boeing:rate_limiter:tokens` | Current token count | None |
+| `boeing:rate_limiter:last_refill` | Timestamp of last refill | None |
+| `celery:queue:sync_boeing` | Boeing sync task queue | Auto |
+| `celery:queue:sync_shopify` | Shopify update task queue | Auto |
+
+### 2.3 Worker Types
+
+| Worker | Queue | Concurrency | Rate Limit | Purpose |
+|--------|-------|-------------|------------|---------|
+| Dispatcher | default | 4 | None | Orchestration tasks |
+| Boeing Sync | sync_boeing | 1 | Token bucket (2/min) | Call Boeing API |
+| Shopify Sync | sync_shopify | 4 | 30/min | Update Shopify |
+
+---
+
+## 3. Dynamic Slot Allocation Model
+
+### 3.1 The Problem with Equal Distribution
+
+```
+INEFFICIENT (hash % 24):
+─────────────────────────────────────────────────────────────────
+100 products ÷ 24 hours = 4.2 products/hour
+→ 24 Boeing API calls with only 4-5 SKUs each
+→ 42% API efficiency (wasting 58% capacity per call)
+```
+
+### 3.2 Boeing-Efficient Slot Allocation
+
+```
+EFFICIENT (minimum slots with full batches):
+─────────────────────────────────────────────────────────────────
+100 products ÷ 10 per batch = 10 active slots needed
+→ 10 Boeing API calls with exactly 10 SKUs each
+→ 100% API efficiency
+
+FORMULA:
+active_slots = min(24, ceil(total_products / 10))
+```
+
+### 3.3 Slot States
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                            SLOT STATE MACHINE                                      │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│   ┌──────────┐     First product      ┌──────────┐     10th product     ┌────────┐│
+│   │ DORMANT  │ ───────assigned──────▶ │ FILLING  │ ─────assigned──────▶ │ ACTIVE ││
+│   │          │                        │ (1-9)    │                      │ (10+)  ││
+│   │ No prods │                        │ products │                      │products││
+│   │ assigned │                        │          │                      │        ││
+│   └──────────┘                        └──────────┘                      └────────┘│
+│        │                                   │                                 │     │
+│        │                                   │                                 │     │
+│        │   Dispatcher: SKIP                │   Dispatcher: BORROW            │     │
+│        │   (no products)                   │   from other FILLING            │     │
+│        │                                   │   slots to make batch           │     │
+│        │                                   │   of 10                         │     │
+│        │                                   │                                 │     │
+│        │                                   │   Dispatcher: PROCESS           │     │
+│        │                                   │   full batches of 10            │     │
+│                                                                                    │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.4 Least-Loaded Packing Algorithm
+
+```
+WHEN: A new product is published to Shopify
+GOAL: Assign to hour bucket that maintains batch efficiency
+
+ALGORITHM:
+─────────────────────────────────────────────────────────────────
+1. Get current slot distribution
+   distribution = {0: 10, 1: 10, 2: 8, 3: 0, ...}
+
+2. Calculate target slots
+   total_products = sum(distribution) + 1
+   target_slots = min(24, ceil(total_products / 10))
+
+3. Decision:
+   IF current_slots < target_slots:
+       → Activate NEW slot (find first dormant hour)
+   ELSE:
+       → Add to LEAST-LOADED existing slot
+
+EXAMPLE PROGRESSION:
+─────────────────────────────────────────────────────────────────
+Products 1-10:   All go to Hour 0 (slot 0 fills up)
+Product 11:      Activates Hour 1 (new slot needed)
+Products 12-20:  Fill Hour 1
+Product 21:      Activates Hour 2
+...
+Products 231-240: Fill Hour 23 (all 24 slots now active)
+Product 241+:    Go to least-loaded slot among all 24
+```
+
+---
+
+## 4. Token Bucket Rate Limiter
+
+### 4.1 Why Token Bucket?
+
+```
+PROBLEM WITH CELERY RATE LIMITING:
+─────────────────────────────────────────────────────────────────
+• rate_limit='2/m' is PER-WORKER
+• 2 workers × 2/min = 4 calls/min (EXCEEDS Boeing limit!)
+• Failures happen AFTER API call (reactive, not proactive)
+
+TOKEN BUCKET SOLUTION:
+─────────────────────────────────────────────────────────────────
+• GLOBAL rate limit in Redis
+• Workers acquire token BEFORE API call
+• No token = WAIT (don't call, don't fail)
+• Atomic operations via Lua script
+```
+
+### 4.2 Token Bucket Configuration
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Capacity | 2 | Maximum tokens (burst) |
+| Refill Rate | 2/minute | Tokens added per minute |
+| Refill Interval | 30 seconds | Time between adding 1 token |
+
+### 4.3 Token Bucket Flow
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                          TOKEN BUCKET ALGORITHM                                    │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│   ┌─────────────────────────────────────────────────────────────────────────────┐ │
+│   │  REDIS STATE:                                                                │ │
+│   │  boeing:rate_limiter:tokens = 2.0                                            │ │
+│   │  boeing:rate_limiter:last_refill = 1704067200.0 (timestamp)                  │ │
+│   └─────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                    │
+│   Worker wants to call Boeing API:                                                 │
+│                                                                                    │
+│   ┌─────────────────────┐                                                          │
+│   │  1. CALCULATE       │                                                          │
+│   │     REFILL          │                                                          │
+│   │                     │  elapsed = now - last_refill                             │
+│   │                     │  tokens_to_add = elapsed / 30  (1 token per 30 sec)      │
+│   │                     │  new_tokens = min(2, current + tokens_to_add)            │
+│   └──────────┬──────────┘                                                          │
+│              │                                                                     │
+│              ▼                                                                     │
+│   ┌─────────────────────┐                                                          │
+│   │  2. TRY ACQUIRE     │                                                          │
+│   │     TOKEN           │                                                          │
+│   │                     │  IF tokens >= 1:                                         │
+│   │                     │      tokens -= 1                                         │
+│   │                     │      RETURN success                                      │
+│   │                     │  ELSE:                                                   │
+│   │                     │      RETURN wait_time                                    │
+│   └──────────┬──────────┘                                                          │
+│              │                                                                     │
+│       ┌──────┴──────┐                                                              │
+│       ▼             ▼                                                              │
+│   ┌─────────┐   ┌─────────┐                                                        │
+│   │ SUCCESS │   │  WAIT   │                                                        │
+│   │         │   │         │                                                        │
+│   │ Call    │   │ Sleep   │                                                        │
+│   │ Boeing  │   │ for     │                                                        │
+│   │ API     │   │ wait_   │                                                        │
+│   │         │   │ time    │                                                        │
+│   │         │   │         │                                                        │
+│   │         │   │ Then    │                                                        │
+│   │         │   │ retry   │                                                        │
+│   └─────────┘   └─────────┘                                                        │
+│                                                                                    │
+│   ALL OPERATIONS ARE ATOMIC (Lua script in Redis)                                  │
+│                                                                                    │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4.4 Lua Script for Atomicity
+
+```lua
+-- Token bucket acquire script (runs atomically in Redis)
+
+local tokens_key = KEYS[1]
+local last_refill_key = KEYS[2]
+local capacity = tonumber(ARGV[1])      -- 2
+local refill_rate = tonumber(ARGV[2])   -- 2 per minute
+local now = tonumber(ARGV[3])           -- current timestamp
+
+-- Get current state
+local tokens = tonumber(redis.call('GET', tokens_key) or capacity)
+local last_refill = tonumber(redis.call('GET', last_refill_key) or now)
+
+-- Calculate tokens to add
+local elapsed = now - last_refill
+local tokens_to_add = elapsed * (refill_rate / 60)
+tokens = math.min(capacity, tokens + tokens_to_add)
+
+-- Try to acquire token
+if tokens >= 1 then
+    tokens = tokens - 1
+    redis.call('SET', tokens_key, tokens)
+    redis.call('SET', last_refill_key, now)
+    return {1, 0}  -- success, wait_time=0
+else
+    -- Calculate wait time for next token
+    local wait_time = (1 - tokens) * (60 / refill_rate)
+    redis.call('SET', tokens_key, tokens)
+    redis.call('SET', last_refill_key, now)
+    return {0, wait_time}  -- failed, wait_time in seconds
+end
+```
+
+---
+
+## 5. Data Flow Diagrams
+
+### 5.1 Product Onboarding Flow
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                        PHASE 1: PRODUCT ONBOARDING                                 │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│   User publishes products via UI                                                   │
+│           │                                                                        │
+│           ▼                                                                        │
+│   ┌───────────────────────────────────────────────────────────────────────────┐   │
+│   │  POST /api/bulk-publish                                                    │   │
+│   │  Body: { part_numbers: ["SKU-1", "SKU-2", ...] }                          │   │
+│   └───────────────────────────────────────────────────────────────────────────┘   │
+│           │                                                                        │
+│           ▼                                                                        │
+│   ┌───────────────────────────────────────────────────────────────────────────┐   │
+│   │  publish_product task (for each SKU)                                       │   │
+│   │                                                                            │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 1: Fetch from Boeing API                                       │  │   │
+│   │  │  • Get price, quantity, availability                                 │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: boeing_raw_data (audit trail)                               │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 2: Create in Shopify                                           │  │   │
+│   │  │  • Create product with price, inventory                              │  │   │
+│   │  │  • Get shopify_product_id                                            │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: product_staging                                              │  │   │
+│   │  │  WRITES: None (external API)                                         │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 3: Save to database                                            │  │   │
+│   │  │  • Update product_staging with shopify_id                            │  │   │
+│   │  │  • Upsert to product table                                           │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: product_staging, product                                    │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 4: Create sync schedule (NEW)                                  │  │   │
+│   │  │  • Calculate hour_bucket via least-loaded algorithm                  │  │   │
+│   │  │  • Store initial boeing_hash for change detection                    │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: product_sync_schedule (for distribution)                     │  │   │
+│   │  │  WRITES: product_sync_schedule                                       │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                    │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.2 Hourly Sync Dispatch Flow
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                        PHASE 2: HOURLY SYNC DISPATCH                               │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│   Celery Beat triggers at HH:00                                                    │
+│           │                                                                        │
+│           ▼                                                                        │
+│   ┌───────────────────────────────────────────────────────────────────────────┐   │
+│   │  dispatch_hourly_sync task                                                 │   │
+│   │                                                                            │   │
+│   │  current_hour = datetime.utcnow().hour                                     │   │
+│   │                                                                            │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 1: Reset stuck products                                        │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  UPDATE product_sync_schedule                                        │  │   │
+│   │  │  SET sync_status = 'pending'                                         │  │   │
+│   │  │  WHERE sync_status = 'syncing'                                       │  │   │
+│   │  │  AND last_sync_at < NOW() - INTERVAL '30 minutes'                    │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: product_sync_schedule                                        │  │   │
+│   │  │  WRITES: product_sync_schedule                                       │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 2: Get products for current hour                               │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  SELECT * FROM product_sync_schedule                                 │  │   │
+│   │  │  WHERE hour_bucket = current_hour                                    │  │   │
+│   │  │  AND is_active = TRUE                                                │  │   │
+│   │  │  AND sync_status != 'syncing'                                        │  │   │
+│   │  │  AND (last_sync_at IS NULL                                           │  │   │
+│   │  │       OR last_sync_at::date < CURRENT_DATE)                          │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: product_sync_schedule                                        │  │   │
+│   │  │  WRITES: None                                                        │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 3: Borrow from FILLING slots (if needed)                       │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  IF products.count < 10:                                             │  │   │
+│   │  │      # Get products from other FILLING slots                         │  │   │
+│   │  │      SELECT * FROM product_sync_schedule                             │  │   │
+│   │  │      WHERE hour_bucket != current_hour                               │  │   │
+│   │  │      AND is_active = TRUE                                            │  │   │
+│   │  │      AND sync_status != 'syncing'                                    │  │   │
+│   │  │      AND (last_sync_at IS NULL                                       │  │   │
+│   │  │           OR last_sync_at::date < CURRENT_DATE)                      │  │   │
+│   │  │      # Add to products list                                          │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: product_sync_schedule                                        │  │   │
+│   │  │  WRITES: None                                                        │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 4: Mark as syncing (acquire lock)                              │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  UPDATE product_sync_schedule                                        │  │   │
+│   │  │  SET sync_status = 'syncing',                                        │  │   │
+│   │  │      last_sync_at = NOW()                                            │  │   │
+│   │  │  WHERE id IN (selected_ids)                                          │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: product_sync_schedule                                       │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 5: Create batches of 10 and queue                              │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  batches = chunk(products, 10)                                       │  │   │
+│   │  │  for batch in batches:                                               │  │   │
+│   │  │      sync_boeing_batch.apply_async(                                  │  │   │
+│   │  │          args=[batch_data],                                          │  │   │
+│   │  │          queue='sync_boeing'                                         │  │   │
+│   │  │      )                                                               │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: Redis queue (sync_boeing)                                   │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                    │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.3 Boeing Sync Batch Flow
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                        PHASE 3: BOEING SYNC BATCH                                  │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│   Celery Worker pulls task from sync_boeing queue                                  │
+│           │                                                                        │
+│           ▼                                                                        │
+│   ┌───────────────────────────────────────────────────────────────────────────┐   │
+│   │  sync_boeing_batch task                                                    │   │
+│   │                                                                            │   │
+│   │  Input: batch_data = [{sku, user_id}, ... 10 items]                       │   │
+│   │                                                                            │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 1: Acquire rate limiter token                                  │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  rate_limiter = BoeingRateLimiter(redis)                             │  │   │
+│   │  │  rate_limiter.wait_for_token()  # Blocks if no token                 │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: Redis (boeing:rate_limiter:*)                                │  │   │
+│   │  │  WRITES: Redis (boeing:rate_limiter:*)                               │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 2: Call Boeing API with 10 SKUs                                │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  skus = [item['sku'] for item in batch_data]                         │  │   │
+│   │  │  response = boeing_client.fetch_price_availability_batch(skus)       │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: None (external API)                                         │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 3: For each SKU - detect changes                               │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  for item in batch_data:                                             │  │   │
+│   │  │      sku = item['sku']                                               │  │   │
+│   │  │      line_item = extract_from_response(response, sku)                │  │   │
+│   │  │                                                                      │  │   │
+│   │  │      # Compute new hash                                              │  │   │
+│   │  │      new_hash = hash(price, quantity, in_stock)                      │  │   │
+│   │  │                                                                      │  │   │
+│   │  │      # Get old hash from schedule                                    │  │   │
+│   │  │      schedule = get_sync_schedule(sku)                               │  │   │
+│   │  │      old_hash = schedule.last_boeing_hash                            │  │   │
+│   │  │                                                                      │  │   │
+│   │  │      if new_hash != old_hash:                                        │  │   │
+│   │  │          # CHANGE DETECTED - queue Shopify update                    │  │   │
+│   │  │          sync_shopify_product.apply_async(...)                       │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: product_sync_schedule                                        │  │   │
+│   │  │  WRITES: Redis queue (sync_shopify)                                  │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 4: Update sync schedule                                        │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  for item in batch_data:                                             │  │   │
+│   │  │      IF success:                                                     │  │   │
+│   │  │          UPDATE product_sync_schedule                                │  │   │
+│   │  │          SET sync_status = 'success',                                │  │   │
+│   │  │              last_sync_at = NOW(),                                   │  │   │
+│   │  │              last_boeing_hash = new_hash,                            │  │   │
+│   │  │              last_price = new_price,                                 │  │   │
+│   │  │              last_quantity = new_quantity,                           │  │   │
+│   │  │              consecutive_failures = 0                                │  │   │
+│   │  │          WHERE sku = sku                                             │  │   │
+│   │  │                                                                      │  │   │
+│   │  │      IF failure:                                                     │  │   │
+│   │  │          UPDATE product_sync_schedule                                │  │   │
+│   │  │          SET sync_status = 'failed',                                 │  │   │
+│   │  │              last_sync_at = NOW(),                                   │  │   │
+│   │  │              consecutive_failures = consecutive_failures + 1,        │  │   │
+│   │  │              last_error = error_message,                             │  │   │
+│   │  │              is_active = CASE WHEN failures >= 5                     │  │   │
+│   │  │                          THEN FALSE ELSE TRUE END                    │  │   │
+│   │  │          WHERE sku = sku                                             │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: product_sync_schedule                                       │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                    │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.4 Shopify Sync Flow
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                        PHASE 4: SHOPIFY SYNC (On Change)                           │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│   Triggered ONLY when Boeing data changed (hash mismatch)                          │
+│           │                                                                        │
+│           ▼                                                                        │
+│   ┌───────────────────────────────────────────────────────────────────────────┐   │
+│   │  sync_shopify_product task                                                 │   │
+│   │                                                                            │   │
+│   │  Input: sku, user_id, new_price, new_quantity                             │   │
+│   │                                                                            │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 1: Get Shopify product ID                                      │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  SELECT shopify_product_id FROM product_staging                      │  │   │
+│   │  │  WHERE sku = sku AND user_id = user_id                               │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: product_staging                                              │  │   │
+│   │  │  WRITES: None                                                        │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 2: Calculate Shopify price                                     │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  shopify_price = new_price * 1.1  (10% markup)                       │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: None                                                        │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 3: Update Shopify                                              │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  shopify_client.update_product(                                      │  │   │
+│   │  │      product_id,                                                     │  │   │
+│   │  │      price=shopify_price,                                            │  │   │
+│   │  │      inventory=new_quantity                                          │  │   │
+│   │  │  )                                                                   │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: None (external API)                                         │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 4: Update local database                                       │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  UPDATE product_staging                                              │  │   │
+│   │  │  SET price = shopify_price,                                          │  │   │
+│   │  │      list_price = new_price,                                         │  │   │
+│   │  │      inventory_quantity = new_quantity                               │  │   │
+│   │  │  WHERE sku = sku AND user_id = user_id                               │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  UPDATE product                                                      │  │   │
+│   │  │  SET price = shopify_price,                                          │  │   │
+│   │  │      inventory_quantity = new_quantity                               │  │   │
+│   │  │  WHERE sku = sku AND user_id = user_id                               │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: product_staging, product                                    │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                    │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.5 Retry Dispatch Flow
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                        RETRY SYNC DISPATCH                                         │
+├───────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│   Celery Beat triggers at :30 (every 4 hours: 3,7,11,15,19,23)                    │
+│           │                                                                        │
+│           ▼                                                                        │
+│   ┌───────────────────────────────────────────────────────────────────────────┐   │
+│   │  dispatch_retry_sync task                                                  │   │
+│   │                                                                            │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 1: Get ALL failed products (across all slots)                  │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  SELECT * FROM product_sync_schedule                                 │  │   │
+│   │  │  WHERE sync_status = 'failed'                                        │  │   │
+│   │  │  AND is_active = TRUE                                                │  │   │
+│   │  │  ORDER BY consecutive_failures ASC, last_sync_at ASC                 │  │   │
+│   │  │  LIMIT 100                                                           │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: product_sync_schedule                                        │  │   │
+│   │  │  WRITES: None                                                        │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 2: Batch into groups of 10                                     │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  batches = chunk(failed_products, 10)                                │  │   │
+│   │  │  # Process ALL batches including remainder < 10                      │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: None                                                        │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   │                          │                                                 │   │
+│   │                          ▼                                                 │   │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐  │   │
+│   │  │  STEP 3: Mark as syncing and queue                                   │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  for batch in batches:                                               │  │   │
+│   │  │      mark_products_syncing(batch_ids)                                │  │   │
+│   │  │      sync_boeing_batch.apply_async(batch_data)                       │  │   │
+│   │  │                                                                      │  │   │
+│   │  │  READS: None                                                         │  │   │
+│   │  │  WRITES: product_sync_schedule, Redis queue                          │  │   │
+│   │  └─────────────────────────────────────────────────────────────────────┘  │   │
+│   └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                    │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 6. Database Schema
+
+### 6.1 product_sync_schedule Table
+
+```sql
+CREATE TABLE product_sync_schedule (
+    -- Primary Key
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    -- Product Identity
+    user_id TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    UNIQUE(user_id, sku),
+
+    -- Slot Assignment (calculated via least-loaded algorithm)
+    hour_bucket SMALLINT NOT NULL CHECK (hour_bucket BETWEEN 0 AND 23),
+
+    -- Sync Status
+    sync_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (sync_status IN ('pending', 'syncing', 'success', 'failed')),
+
+    -- Timing
+    last_sync_at TIMESTAMPTZ,              -- Last sync attempt
+
+    -- Failure Tracking
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+
+    -- Change Detection
+    last_boeing_hash TEXT,                  -- MD5 of (price, qty, in_stock)
+    last_price NUMERIC,
+    last_quantity INTEGER,
+
+    -- Control
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+    -- Timestamps
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 6.2 Database Read/Write Summary
+
+| Task | Table | Operation | Fields |
+|------|-------|-----------|--------|
+| `dispatch_hourly_sync` | product_sync_schedule | READ | hour_bucket, sync_status, last_sync_at |
+| `dispatch_hourly_sync` | product_sync_schedule | WRITE | sync_status → 'syncing' |
+| `sync_boeing_batch` | product_sync_schedule | READ | last_boeing_hash |
+| `sync_boeing_batch` | product_sync_schedule | WRITE | sync_status, last_sync_at, last_boeing_hash, failures |
+| `sync_shopify_product` | product_staging | READ | shopify_product_id |
+| `sync_shopify_product` | product_staging | WRITE | price, inventory_quantity |
+| `sync_shopify_product` | product | WRITE | price, inventory_quantity |
+| `publish_product` | product_sync_schedule | WRITE | INSERT new schedule |
+
+### 6.3 Indexes
+
+```sql
+-- For hourly dispatch query
+CREATE INDEX idx_sync_hourly ON product_sync_schedule
+    (hour_bucket, sync_status, last_sync_at)
+    WHERE is_active = TRUE;
+
+-- For retry query
+CREATE INDEX idx_sync_failed ON product_sync_schedule
+    (consecutive_failures, last_sync_at)
+    WHERE is_active = TRUE AND sync_status = 'failed';
+
+-- For slot distribution query
+CREATE INDEX idx_sync_distribution ON product_sync_schedule
+    (hour_bucket)
+    WHERE is_active = TRUE;
+
+-- For stuck detection
+CREATE INDEX idx_sync_stuck ON product_sync_schedule
+    (last_sync_at)
+    WHERE sync_status = 'syncing';
+```
+
+---
+
+## 7. Celery Task Definitions
+
+### 7.1 Task Registry
+
+| Task Name | Queue | Rate Limit | Purpose |
+|-----------|-------|------------|---------|
+| `dispatch_hourly_sync` | default | None | Orchestrate hourly batch creation |
+| `dispatch_retry_sync` | default | None | Orchestrate retry batch creation |
+| `end_of_day_cleanup` | default | None | Process all remaining products |
+| `reset_stuck_syncing` | default | None | Reset stuck products |
+| `sync_boeing_batch` | sync_boeing | Token bucket (2/min) | Call Boeing API |
+| `sync_shopify_product` | sync_shopify | 30/min | Update Shopify |
+
+### 7.2 Beat Schedule
+
+```python
+beat_schedule = {
+    'hourly-sync': {
+        'task': 'dispatch_hourly_sync',
+        'schedule': crontab(minute=0, hour='*'),
+    },
+    'retry-sync': {
+        'task': 'dispatch_retry_sync',
+        'schedule': crontab(minute=30, hour='3,7,11,15,19,23'),
+    },
+    'end-of-day-cleanup': {
+        'task': 'end_of_day_cleanup',
+        'schedule': crontab(minute=45, hour=23),
+    },
+    'reset-stuck': {
+        'task': 'reset_stuck_syncing',
+        'schedule': crontab(minute=55, hour='*'),
+    },
+}
+```
+
+---
+
+## 8. Failure Handling & Retries
+
+### 8.1 Failure Types
+
+| Type | Cause | Handling |
+|------|-------|----------|
+| Transient | Network timeout, 500 error | Retry via retry dispatcher |
+| Permanent | SKU not found, invalid data | Deactivate after 5 failures |
+| Stuck | Worker crash mid-processing | Reset after 30 minutes |
+
+### 8.2 Deactivation Flow
+
+```
+consecutive_failures = 0 (initial)
+        │
+        │ Sync failure
+        ▼
+consecutive_failures = 1
+        │
+        │ Retry fails
+        ▼
+consecutive_failures = 2
+        │
+        │ ... continues ...
+        ▼
+consecutive_failures = 5
+        │
+        │ Automatic deactivation
+        ▼
+is_active = FALSE
+Shopify product → DRAFT status
+Manual review required
+```
+
+---
+
+## 9. Scaling Analysis
+
+### 9.1 Capacity Planning
+
+| Products | Active Slots | Boeing Calls/Day | Sync Duration | Rate Limit Usage |
+|----------|--------------|------------------|---------------|------------------|
+| 50 | 5 | 5 | 5 hours | 0.2% |
+| 100 | 10 | 10 | 10 hours | 0.3% |
+| 500 | 24 | 50 | 24 hours | 1.7% |
+| 5,000 | 24 | 500 | 24 hours | 17% |
+| 10,000 | 24 | 1,000 | 24 hours | 35% |
+| 28,800 | 24 | 2,880 | 24 hours | 100% (max) |
+
+### 9.2 Rate Limit Math
+
+```
+Boeing Rate Limit: 2 calls/minute
+Daily Capacity: 2 × 60 × 24 = 2,880 calls
+Max Products: 2,880 × 10 SKUs = 28,800 products/day
+```
+
+---
+
+## 10. Monitoring & Observability
+
+### 10.1 Key Metrics
+
+| Metric | Query | Healthy | Warning | Alert |
+|--------|-------|---------|---------|-------|
+| Sync Success Rate | success / (success + failed) | >95% | 80-95% | <80% |
+| Stuck Products | WHERE sync_status = 'syncing' AND last_sync_at < 30 min ago | 0 | 1-10 | >10 |
+| Deactivated Products | WHERE is_active = FALSE | <1% | 1-5% | >5% |
+| Token Wait Time | Average wait for rate limiter token | <5s | 5-30s | >30s |
+
+### 10.2 Dashboard Queries
+
+```sql
+-- Products synced today
+SELECT COUNT(*) FROM product_sync_schedule
+WHERE last_sync_at::date = CURRENT_DATE AND sync_status = 'success';
+
+-- Currently syncing
+SELECT COUNT(*) FROM product_sync_schedule
+WHERE sync_status = 'syncing';
+
+-- Distribution by hour
+SELECT hour_bucket, COUNT(*) FROM product_sync_schedule
+WHERE is_active = TRUE
+GROUP BY hour_bucket ORDER BY hour_bucket;
+```
+
+---
+
+## Appendix: File Structure
+
+```
+backend/
+├── app/
+│   ├── db/
+│   │   └── sync_store.py           # Database operations
+│   └── utils/
+│       ├── sync_helpers.py         # Helper functions
+│       └── rate_limiter.py         # Token bucket implementation
+├── celery_app/
+│   ├── celery_config.py            # Celery configuration + beat schedule
+│   └── tasks/
+│       └── sync_dispatcher.py      # All sync scheduler tasks
+└── scripts/
+    └── backfill_sync_schedules.py  # Migration script
+```

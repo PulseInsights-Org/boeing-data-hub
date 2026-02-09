@@ -41,6 +41,8 @@ jobs:
             --exclude '.env' \
             --exclude 'venv' \
             --exclude '.git' \
+            --exclude 'celerybeat-schedule*' \
+            --exclude 'tests' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             ./backend/ \
             ${{ env.EC2_USER }}@${{ env.EC2_HOST }}:${{ env.DEPLOY_PATH }}/
@@ -54,12 +56,13 @@ jobs:
             source venv/bin/activate
             pip install -r requirements.txt --quiet
 
-            # Restart services
+            # Restart all three services
             sudo systemctl restart boeing-backend
             sudo systemctl restart boeing-celery
+            sudo systemctl restart boeing-celery-beat
 
-            # Wait and check status
-            sleep 3
+            # Wait for services to stabilize
+            sleep 5
 
             # Verify services are running
             if systemctl is-active --quiet boeing-backend; then
@@ -71,10 +74,18 @@ jobs:
             fi
 
             if systemctl is-active --quiet boeing-celery; then
-              echo "✅ Celery service is running"
+              echo "✅ Celery worker service is running"
             else
-              echo "❌ Celery service failed to start"
+              echo "❌ Celery worker service failed to start"
               sudo journalctl -u boeing-celery -n 20 --no-pager
+              exit 1
+            fi
+
+            if systemctl is-active --quiet boeing-celery-beat; then
+              echo "✅ Celery beat service is running"
+            else
+              echo "❌ Celery beat service failed to start"
+              sudo journalctl -u boeing-celery-beat -n 20 --no-pager
               exit 1
             fi
 

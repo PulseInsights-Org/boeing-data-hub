@@ -110,3 +110,8 @@ def get_supabase_store():
 def get_batch_store():
     """Get batch store instance."""
     return get_dependencies()["batch_store"]
+
+
+def get_settings():
+    """Get settings instance."""
+    return get_dependencies()["settings"]

@@ -38,7 +38,10 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
 
     for item in line_items:
         part_number = item.get("aviallPartNumber") or ""
-        title = _strip_variant_suffix(part_number)
+        # Store FULL part number (with variant suffix like "WF338109=K3") in database
+        # Strip suffix only for Shopify display
+        title = part_number  # Full SKU for database
+        shopify_title = _strip_variant_suffix(part_number)  # Stripped for Shopify display
         name = item.get("name") or part_number or query
         description = item.get("description") or ""
 
@@ -94,8 +97,10 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
         condition = "NE"
         estimated_lead_time = 60
 
-        # SKU should be stripped of any suffix after = (e.g., "WF338109=K3" -> "WF338109")
-        sku = _strip_variant_suffix(part_number)
+        # sku: Full SKU with variant suffix stored in database (e.g., "WF338109=K3")
+        # shopify_sku: Stripped version for Shopify display (e.g., "WF338109")
+        sku = part_number  # Full SKU stored in database
+        shopify_sku = _strip_variant_suffix(part_number)  # Stripped for Shopify
 
         # Certificate value for description
         cert = "FAA 8130-3"
@@ -104,7 +109,8 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
         base_uom = item.get("baseUOM") or ""
 
         # Build description as concatenation of Part No, Description (name), Cert, Condition, UoM
-        body_html = f"""<p>Part No. {sku}</p>
+        # Use stripped SKU for Shopify display
+        body_html = f"""<p>Part No. {shopify_sku}</p>
 <p>Description: {name}</p>
 <p>Cert: {cert}</p>
 <p>Condition: {condition}</p>
@@ -127,6 +133,8 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
         normalized.append(
             {
                 "aviall_part_number": part_number,
+                # Note: sku field now stores FULL SKU with variant suffix (e.g., "WF338109=K3")
+                # Shopify worker will strip suffix when publishing
                 "base_uom": item.get("baseUOM"),
                 "country_of_origin": item.get("countryOfOrigin"),
                 "description": description,
@@ -159,7 +167,7 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
                 "boeing_thumbnail_url": boeing_thumbnail_url,
                 "title": title,
                 "sku": sku,
-                "vendor": "BDI",
+                "vendor": None,
                 "manufacturer": manufacturer,
                 "cost_per_item": cost_per_item,
                 "price": price,
@@ -174,11 +182,12 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
                 "dim_height": height,
                 "cert": cert,
                 "shopify": {
-                    "title": title,
-                    "sku": sku,
+                    # Shopify fields use STRIPPED values (no variant suffix)
+                    "title": shopify_title,
+                    "sku": shopify_sku,
                     "description": name,
                     "body_html": body_html,
-                    "vendor": "BDI",
+                    "vendor": None,
                     "manufacturer": manufacturer,
                     "cost_per_item": cost_per_item,
                     "price": price,
