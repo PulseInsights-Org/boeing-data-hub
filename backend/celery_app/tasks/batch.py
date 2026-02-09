@@ -58,17 +58,40 @@ def check_batch_completion(self, batch_id: str):
         }
 
     total = batch["total_items"]
+    extracted = batch.get("extracted_count", 0)
     normalized = batch["normalized_count"]
     published = batch["published_count"]
     failed = batch["failed_count"]
     batch_type = batch["batch_type"]
+
+    logger.debug(
+        f"Batch {batch_id} progress: type={batch_type}, total={total}, "
+        f"extracted={extracted}, normalized={normalized}, published={published}, failed={failed}"
+    )
 
     is_stage_complete = False
 
     # Check if current stage is complete based on batch_type
     if batch_type == "search":
         # Search stage: check if normalization is complete
+        # Primary check: normalized + failed >= total
         is_stage_complete = (normalized + failed) >= total
+
+        # Fallback check: If we've processed everything that was extracted
+        # This handles edge cases where:
+        # - Some parts weren't found in Boeing response (not counted in extracted)
+        # - Duplicate part numbers in input (fewer unique items than total)
+        # - Database trigger counting differs from expected
+        if not is_stage_complete and extracted > 0:
+            # If normalized + failed >= extracted, all extracted items are processed
+            if (normalized + failed) >= extracted:
+                logger.warning(
+                    f"Batch {batch_id}: Using fallback completion check. "
+                    f"total={total}, extracted={extracted}, normalized={normalized}, failed={failed}. "
+                    f"Some items may have been duplicates or not found in Boeing."
+                )
+                is_stage_complete = True
+
     elif batch_type == "publishing":
         # Publishing stage: check if all items are published
         is_stage_complete = (published + failed) >= total
@@ -147,12 +170,18 @@ def check_batch_completion(self, batch_id: str):
                 "failed": failed
             }
 
+    logger.debug(
+        f"Batch {batch_id} still processing: "
+        f"normalized+failed ({normalized}+{failed}={normalized+failed}) < total ({total})"
+    )
+
     return {
         "batch_id": batch_id,
         "status": "processing",
         "batch_type": batch_type,
         "progress": {
             "total": total,
+            "extracted": extracted,
             "normalized": normalized,
             "published": published,
             "failed": failed

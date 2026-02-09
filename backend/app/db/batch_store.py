@@ -68,6 +68,7 @@ class BatchStore:
             "published_count": 0,
             "failed_count": 0,
             "failed_items": [],
+            "failed_part_numbers": [],
             "part_numbers": part_numbers or [],
             "celery_task_id": celery_task_id,
             "idempotency_key": idempotency_key,
@@ -139,22 +140,25 @@ class BatchStore:
         """
         Update batch status.
 
-        Uses the update_batch_status SQL function for atomic updates.
-
         Args:
             batch_id: Batch identifier
             status: New status (pending, processing, completed, failed, cancelled)
             error_message: Optional error message for failed status
         """
-        # Call the SQL function for atomic update
-        self.client.rpc(
-            "update_batch_status",
-            {
-                "p_batch_id": batch_id,
-                "p_status": status,
-                "p_error": error_message
-            }
-        ).execute()
+        update_data: Dict[str, Any] = {"status": status}
+
+        if error_message:
+            update_data["error_message"] = error_message
+
+        # Add completed_at timestamp when status is completed or failed
+        if status in ("completed", "failed"):
+            from datetime import datetime, timezone
+            update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+        self.client.table(self.table)\
+            .update(update_data)\
+            .eq("id", batch_id)\
+            .execute()
 
         logger.info(f"Updated batch {batch_id} status to {status}")
 
@@ -191,6 +195,37 @@ class BatchStore:
             log_msg += f", publish_part_numbers count: {len(publish_part_numbers)}"
         logger.info(log_msg)
 
+    def _increment_counter(self, batch_id: str, column: str, count: int = 1) -> None:
+        """
+        Increment a counter column.
+
+        Note: This uses read-then-update which is not perfectly atomic,
+        but is sufficient for progress tracking purposes.
+
+        Args:
+            batch_id: Batch identifier
+            column: Column name to increment
+            count: Number to increment by (default: 1)
+        """
+        # Get current value
+        result = self.client.table(self.table)\
+            .select(column)\
+            .eq("id", batch_id)\
+            .execute()
+
+        if not result.data:
+            logger.warning(f"Batch {batch_id} not found for counter increment")
+            return
+
+        current_value = result.data[0].get(column, 0) or 0
+        new_value = current_value + count
+
+        # Update with new value
+        self.client.table(self.table)\
+            .update({column: new_value})\
+            .eq("id", batch_id)\
+            .execute()
+
     def increment_extracted(self, batch_id: str, count: int = 1) -> None:
         """
         Increment the extracted_count counter.
@@ -199,14 +234,7 @@ class BatchStore:
             batch_id: Batch identifier
             count: Number to increment by (default: 1)
         """
-        self.client.rpc(
-            "increment_batch_counter",
-            {
-                "p_batch_id": batch_id,
-                "p_column": "extracted_count",
-                "p_amount": count
-            }
-        ).execute()
+        self._increment_counter(batch_id, "extracted_count", count)
 
     def increment_normalized(self, batch_id: str, count: int = 1) -> None:
         """
@@ -216,14 +244,7 @@ class BatchStore:
             batch_id: Batch identifier
             count: Number to increment by (default: 1)
         """
-        self.client.rpc(
-            "increment_batch_counter",
-            {
-                "p_batch_id": batch_id,
-                "p_column": "normalized_count",
-                "p_amount": count
-            }
-        ).execute()
+        self._increment_counter(batch_id, "normalized_count", count)
 
     def increment_published(self, batch_id: str, count: int = 1) -> None:
         """
@@ -233,14 +254,7 @@ class BatchStore:
             batch_id: Batch identifier
             count: Number to increment by (default: 1)
         """
-        self.client.rpc(
-            "increment_batch_counter",
-            {
-                "p_batch_id": batch_id,
-                "p_column": "published_count",
-                "p_amount": count
-            }
-        ).execute()
+        self._increment_counter(batch_id, "published_count", count)
 
     def record_failure(
         self,
@@ -251,23 +265,48 @@ class BatchStore:
         """
         Record a failed item.
 
-        Uses the record_batch_failure SQL function to atomically:
-        - Append to failed_items JSONB array
-        - Increment failed_count
+        Appends to failed_items JSONB array, failed_part_numbers TEXT[] array,
+        and increments failed_count.
 
         Args:
             batch_id: Batch identifier
             part_number: Part number that failed
             error: Error message describing the failure
         """
-        self.client.rpc(
-            "record_batch_failure",
-            {
-                "p_batch_id": batch_id,
-                "p_part_number": part_number,
-                "p_error": error
-            }
-        ).execute()
+        # Get current batch data
+        result = self.client.table(self.table)\
+            .select("failed_items, failed_part_numbers, failed_count")\
+            .eq("id", batch_id)\
+            .execute()
+
+        if not result.data:
+            logger.warning(f"Batch {batch_id} not found for recording failure")
+            return
+
+        batch = result.data[0]
+        failed_items = batch.get("failed_items") or []
+        failed_part_numbers = batch.get("failed_part_numbers") or []
+        failed_count = batch.get("failed_count") or 0
+
+        # Append new failure
+        failed_items.append({
+            "part_number": part_number,
+            "error": error
+        })
+
+        # Also track just the part number for easy querying
+        if part_number not in failed_part_numbers:
+            failed_part_numbers.append(part_number)
+
+        # Update batch
+        self.client.table(self.table)\
+            .update({
+                "failed_items": failed_items,
+                "failed_part_numbers": failed_part_numbers,
+                "failed_count": failed_count + 1
+            })\
+            .eq("id", batch_id)\
+            .execute()
 
         logger.warning(f"Recorded failure for {part_number} in batch {batch_id}: {error}")
 

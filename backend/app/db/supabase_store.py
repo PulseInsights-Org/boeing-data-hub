@@ -127,8 +127,10 @@ class SupabaseStore:
         for rec in records:
             shopify_data: Dict[str, Any] = rec.get("shopify") or {}
 
+            # Use full SKU from rec (with variant suffix like "WF338109=K3")
+            # Only fall back to shopify_data.sku (stripped) if rec.sku is not available
             part_number = (
-                shopify_data.get("sku") or rec.get("sku") or rec.get("aviall_part_number")
+                rec.get("sku") or rec.get("aviall_part_number") or shopify_data.get("sku")
             )
             name = shopify_data.get("title") or rec.get("title") or part_number
             description = shopify_data.get("body_html") or rec.get("description") or ""
@@ -245,10 +247,12 @@ class SupabaseStore:
     ) -> None:
         shopify_data: Dict[str, Any] = record.get("shopify") or {}
 
+        # Use full SKU from record (with variant suffix like "WF338109=K3")
+        # Only fall back to shopify_data.sku (stripped) if record.sku is not available
         part_number = (
-            shopify_data.get("sku")
-            or record.get("sku")
+            record.get("sku")
             or record.get("aviall_part_number")
+            or shopify_data.get("sku")
         )
         name = shopify_data.get("title") or record.get("title") or part_number
         description = shopify_data.get("body_html") or record.get("description") or ""
@@ -706,3 +710,85 @@ class SupabaseStore:
 
         public_url = f"{self._storage_url}/object/public/{self._bucket}/{object_path}"
         return public_url, object_path
+
+    async def get_product_by_sku(
+        self, sku: str, user_id: str | None = None
+    ) -> Dict[str, Any] | None:
+        """Get a product record by SKU.
+
+        Alias for get_product_by_part_number for consistency.
+
+        Args:
+            sku: The SKU/part number to look up
+            user_id: Optional user ID to filter by
+        """
+        return await self.get_product_by_part_number(sku, user_id)
+
+    async def update_product_pricing(
+        self,
+        sku: str,
+        user_id: str,
+        price: float | None = None,
+        cost: float | None = None,
+        inventory: int | None = None,
+    ) -> None:
+        """Update product pricing and inventory.
+
+        Args:
+            sku: Product SKU/part number
+            user_id: User ID who owns the product
+            price: New Shopify price (with markup)
+            cost: New cost (from Boeing)
+            inventory: New inventory quantity
+        """
+        payload = {}
+        if price is not None:
+            payload["price"] = price
+        if cost is not None:
+            payload["cost_per_item"] = cost
+        if inventory is not None:
+            payload["inventory_quantity"] = inventory
+
+        if not payload:
+            return
+
+        try:
+            self._client.table("product") \
+                .update(payload) \
+                .eq("user_id", user_id) \
+                .eq("sku", sku) \
+                .execute()
+
+            logger.info(f"Updated product pricing: sku={sku}, user_id={user_id}, changes={payload}")
+        except APIError as e:
+            logger.error(f"Failed to update product pricing: sku={sku}, error={e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to update product pricing: {e}",
+            )
+
+
+# Singleton instance
+_supabase_store: SupabaseStore | None = None
+
+
+def get_supabase_store() -> SupabaseStore:
+    """
+    Get or create the singleton SupabaseStore instance.
+
+    Returns:
+        SupabaseStore instance
+    """
+    global _supabase_store
+
+    if _supabase_store is None:
+        from app.core.config import settings
+        _supabase_store = SupabaseStore(settings)
+
+    return _supabase_store
+
+
+def reset_supabase_store() -> None:
+    """Reset the singleton instance (for testing)."""
+    global _supabase_store
+    _supabase_store = None

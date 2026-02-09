@@ -6,7 +6,12 @@
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(findstr:*)",
       "Bash(py -3.13 -m pip install python-jose[cryptography])",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(\".venv/Scripts/python.exe\" -c \"from celery_app.tasks.sync_dispatcher import dispatch_hourly_sync; print\\(''Import successful''\\)\")",
+      "Bash(python -m py_compile:*)",
+      "Bash(del:*)",
+      "Bash(python -c:*)",
+      "Bash(python -m pytest tests/test_sync_helpers.py -v --tb=short)"
     ]
   }
 }

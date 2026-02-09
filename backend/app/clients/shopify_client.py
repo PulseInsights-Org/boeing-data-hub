@@ -9,7 +9,8 @@ logger = logging.getLogger("shopify_client")
 
 class ShopifyClient:
     def __init__(self, settings: Settings) -> None:
-        self._store_domain = settings.shopify_store_domain
+        raw_domain = settings.shopify_store_domain
+        self._store_domain = self._normalize_store_domain(raw_domain)
         self._token = settings.shopify_admin_api_token
         self._api_version = settings.shopify_api_version
         self._location_map = {}
@@ -17,7 +18,32 @@ class ShopifyClient:
         # Map Boeing location names to 3-char inventory location codes for metafield
         # Example: {"Dallas Central": "1D1", "Chicago Warehouse": "CHI"}
         self._inventory_location_codes = settings.shopify_inventory_location_codes or {}
-        logger.info(f"ShopifyClient initialized with inventory_location_codes: {self._inventory_location_codes}")
+        logger.info(f"ShopifyClient initialized: domain={self._store_domain} (raw: {raw_domain}), inventory_location_codes: {self._inventory_location_codes}")
+
+    @staticmethod
+    def _normalize_store_domain(domain: Optional[str]) -> Optional[str]:
+        """
+        Normalize Shopify store domain to ensure it has .myshopify.com suffix.
+
+        Handles these formats:
+        - "my-store" -> "my-store.myshopify.com"
+        - "my-store.myshopify.com" -> "my-store.myshopify.com" (unchanged)
+        - "https://my-store.myshopify.com" -> "my-store.myshopify.com" (strips protocol)
+        """
+        if not domain:
+            return domain
+
+        # Strip protocol if present
+        domain = domain.replace("https://", "").replace("http://", "")
+
+        # Strip trailing slashes
+        domain = domain.rstrip("/")
+
+        # Add .myshopify.com if not present
+        if not domain.endswith(".myshopify.com"):
+            domain = f"{domain}.myshopify.com"
+
+        return domain
 
     async def _get_location_map(self) -> Dict[str, int]:
         if self._location_map:
@@ -454,8 +480,11 @@ class ShopifyClient:
         metafields = []
 
         # Fields with no validation constraints (always include if non-empty)
+        # part_name: Boeing "name" field (e.g., "Proponent® 2138-0123-1 Plug, Rubber, For Aircrafts")
+        part_name = product.get("name") or ""
         simple_fields = [
             ("part_number", part_number, "single_line_text_field"),
+            ("part_name", part_name, "single_line_text_field"),
             ("alternate_part_number", alternate_part_number, "single_line_text_field"),
             ("manufacturer", manufacturer, "single_line_text_field"),
             ("notes", notes, "multi_line_text_field"),
@@ -632,7 +661,7 @@ class ShopifyClient:
             "product": {
                 "title": title,
                 "body_html": body_html,
-                "vendor": vendor or manufacturer,
+                "vendor": "",
                 "product_type": "Aircraft Parts & Accessories",
                 "tags": tags,
                 "images": images,
@@ -929,3 +958,147 @@ class ShopifyClient:
         except HTTPException as exc:
             logger.error(f"shopify product delete failed id={product_id} error={exc.detail}")
             raise
+
+    async def update_product_pricing(
+        self,
+        shopify_product_id: str | int,
+        price: float | None = None,
+        quantity: int | None = None,
+        metafields: list[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Update just the price and/or inventory for a product.
+
+        Used by sync scheduler to update price/availability without
+        touching other product fields.
+
+        Args:
+            shopify_product_id: Shopify product ID
+            price: New price (optional)
+            quantity: New inventory quantity (optional)
+            metafields: Optional metafields to update
+
+        Returns:
+            dict: Updated product data
+        """
+        # First get current product to update variant
+        data = await self._call_shopify("GET", f"/products/{shopify_product_id}.json")
+        shopify_product = data.get("product") or {}
+        variants = shopify_product.get("variants") or []
+
+        if not variants:
+            raise HTTPException(status_code=404, detail="Product has no variants")
+
+        variant = variants[0]
+        variant_id = variant.get("id")
+
+        # Build variant update payload
+        variant_update = {"id": variant_id}
+        if price is not None:
+            variant_update["price"] = str(price)
+
+        payload = {
+            "product": {
+                "id": int(shopify_product_id),
+                "variants": [variant_update],
+            }
+        }
+
+        if metafields:
+            payload["product"]["metafields"] = metafields
+
+        logger.info(f"shopify update_product_pricing id={shopify_product_id} payload={payload}")
+        result = await self._call_shopify("PUT", f"/products/{shopify_product_id}.json", json=payload)
+
+        # Update inventory if quantity provided
+        if quantity is not None:
+            inventory_item_id = variant.get("inventory_item_id")
+            if inventory_item_id:
+                await self.update_inventory(shopify_product_id, quantity, inventory_item_id)
+
+        return result
+
+    async def update_inventory(
+        self,
+        shopify_product_id: str | int,
+        quantity: int,
+        inventory_item_id: int | None = None,
+    ) -> None:
+        """
+        Update inventory quantity for a product.
+
+        Args:
+            shopify_product_id: Shopify product ID
+            quantity: New inventory quantity
+            inventory_item_id: Optional inventory item ID (will fetch if not provided)
+        """
+        if inventory_item_id is None:
+            # Fetch product to get inventory item ID
+            data = await self._call_shopify("GET", f"/products/{shopify_product_id}.json")
+            shopify_product = data.get("product") or {}
+            variants = shopify_product.get("variants") or []
+            if not variants:
+                logger.warning(f"Product {shopify_product_id} has no variants, skipping inventory update")
+                return
+            inventory_item_id = variants[0].get("inventory_item_id")
+
+        if not inventory_item_id:
+            logger.warning(f"No inventory_item_id for product {shopify_product_id}")
+            return
+
+        # Get location map
+        location_map = await self._get_location_map()
+        if not location_map:
+            logger.warning("No Shopify locations available")
+            return
+
+        # Set inventory at first/default location
+        location_id = next(iter(location_map.values()))
+        payload = {
+            "location_id": location_id,
+            "inventory_item_id": int(inventory_item_id),
+            "available": quantity,
+        }
+
+        logger.info(f"shopify update_inventory product_id={shopify_product_id} qty={quantity}")
+        await self._call_shopify("POST", "/inventory_levels/set.json", json=payload)
+
+    async def update_inventory_by_location(
+        self,
+        shopify_product_id: str | int,
+        location_quantities: list[dict],
+    ) -> None:
+        """
+        Update inventory quantities per location for a product.
+
+        Used by sync scheduler to update inventory levels at each location
+        based on Boeing location availability data.
+
+        Args:
+            shopify_product_id: Shopify product ID
+            location_quantities: List of dicts with 'location' and 'quantity' keys
+                Example: [{"location": "Dallas Central", "quantity": 10}, ...]
+        """
+        if not location_quantities:
+            return
+
+        # Fetch product to get inventory item ID
+        data = await self._call_shopify("GET", f"/products/{shopify_product_id}.json")
+        shopify_product = data.get("product") or {}
+        variants = shopify_product.get("variants") or []
+
+        if not variants:
+            logger.warning(f"Product {shopify_product_id} has no variants, skipping inventory update")
+            return
+
+        inventory_item_id = variants[0].get("inventory_item_id")
+        if not inventory_item_id:
+            logger.warning(f"No inventory_item_id for product {shopify_product_id}")
+            return
+
+        # Use existing _set_inventory_levels method
+        await self._set_inventory_levels(int(inventory_item_id), location_quantities)
+        logger.info(
+            f"shopify update_inventory_by_location product_id={shopify_product_id} "
+            f"locations={len(location_quantities)}"
+        )

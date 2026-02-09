@@ -81,6 +81,21 @@ class Settings(BaseModel):
     boeing_api_rate_limit: str = os.getenv("BOEING_API_RATE_LIMIT", "20/m")
     shopify_api_rate_limit: str = os.getenv("SHOPIFY_API_RATE_LIMIT", "30/m")
 
+    # Sync scheduler settings
+    # - production: Uses hour buckets (0-23)
+    # - testing: Uses minute buckets (0-5 for 10-min intervals)
+    sync_mode: str = os.getenv("SYNC_MODE", "testing")
+    sync_test_bucket_count: int = int(os.getenv("SYNC_TEST_BUCKET_COUNT", "6"))
+    sync_batch_size: int = int(os.getenv("SYNC_BATCH_SIZE", "10"))
+    sync_max_failures: int = int(os.getenv("SYNC_MAX_FAILURES", "5"))
+
+    @property
+    def sync_max_buckets(self) -> int:
+        """Get max buckets based on sync mode."""
+        if self.sync_mode == "testing":
+            return self.sync_test_bucket_count
+        return 24  # 24 hours for production
+
 
 @lru_cache()
 def get_settings() -> Settings:

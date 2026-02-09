@@ -524,8 +524,13 @@ def _calculate_progress(batch: dict) -> float:
         return round((completed / total) * 100, 2)
 
     elif batch_type == "normalized":
-        # Normalized stage: search is complete, show 100%
-        return 100.0
+        # Normalized stage: show actual normalized progress (normalized_count / total_items)
+        # This reflects how many items were successfully normalized out of total requested
+        total = batch["total_items"]
+        if total == 0:
+            return 0.0
+        normalized_count = batch["normalized_count"]
+        return round((normalized_count / total) * 100, 2)
 
     else:  # publishing or publish
         # Publishing stage: use publish_part_numbers count as total

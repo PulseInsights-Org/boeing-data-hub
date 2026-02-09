@@ -90,9 +90,7 @@ def normalize_chunk(self, batch_id: str, part_numbers: List[str], raw_response: 
             batch_store.record_failure(batch_id, pn, f"Normalization error: {e}")
             failed_count += 1
 
-    # Update batch progress
-    if normalized_count > 0:
-        batch_store.increment_normalized(batch_id, normalized_count)
+    # Note: normalized_count is updated by database trigger on product_staging upsert
 
     # Check if batch is complete
     from celery_app.tasks.batch import check_batch_completion

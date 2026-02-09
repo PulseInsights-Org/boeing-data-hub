@@ -1,0 +1,446 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "boeing-data-hub-design",
+  "elements": [
+    {
+      "id": "title-main",
+      "type": "text",
+      "x": 400,
+      "y": 20,
+      "width": 800,
+      "height": 45,
+      "text": "BOEING SYNC SCHEDULER - SEPARATE RETRY DESIGN",
+      "fontSize": 36,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "strokeColor": "#1e1e1e"
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "x": 400,
+      "y": 70,
+      "width": 700,
+      "height": 25,
+      "text": "5,000 Products | 24-Hour Buckets | 2 req/min Rate Limit | Separate Scheduled + Retry Processes",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "strokeColor": "#868e96"
+    },
+
+    {
+      "id": "section1-title",
+      "type": "text",
+      "x": 50,
+      "y": 120,
+      "width": 400,
+      "height": 30,
+      "text": "1. SYSTEM ARCHITECTURE",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#c92a2a"
+    },
+    {
+      "id": "arch-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 160,
+      "width": 1300,
+      "height": 400,
+      "strokeColor": "#c92a2a",
+      "backgroundColor": "#fff5f5",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "arch-content",
+      "type": "text",
+      "x": 70,
+      "y": 175,
+      "width": 1260,
+      "height": 370,
+      "text": "┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐\n│                              TWO INDEPENDENT PROCESSES                                              │\n└─────────────────────────────────────────────────────────────────────────────────────────────────────┘\n\n  PROCESS 1: SCHEDULED SYNC (Every hour at :00)\n  ──────────────────────────────────────────────\n  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐      ┌─────────────┐      ┌─────────────┐\n  │   CELERY    │      │ DISPATCHER  │      │   BOEING    │      │    HASH     │      │   SHOPIFY   │\n  │    BEAT     │─────▶│  (Hour      │─────▶│    API      │─────▶│   COMPARE   │─────▶│    API      │\n  │(:00 hourly) │      │   Bucket)   │      │ (10 SKUs)   │      │  (Change)   │      │ (If Changed)│\n  └─────────────┘      └─────────────┘      └─────────────┘      └─────────────┘      └─────────────┘\n\n  PROCESS 2: RETRY SYNC (Every 4 hours at :30)\n  ────────────────────────────────────────────\n  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐      ┌─────────────┐      ┌─────────────┐\n  │   CELERY    │      │ DISPATCHER  │      │   BOEING    │      │    HASH     │      │   SHOPIFY   │\n  │    BEAT     │─────▶│  (Failed    │─────▶│    API      │─────▶│   COMPARE   │─────▶│    API      │\n  │(:30 4-hrly) │      │  Products)  │      │ (10 SKUs)   │      │  (Change)   │      │ (If Changed)│\n  └─────────────┘      └─────────────┘      └─────────────┘      └─────────────┘      └─────────────┘\n\n                             │                                                              │\n                             ▼                                                              ▼\n                       ┌───────────────────────────────────────────────────────────────────────┐\n                       │                     product_sync_schedule TABLE                       │\n                       │  • last_successful_sync (DATE) - key field for scheduled sync query   │\n                       │  • sync_status, hour_bucket, consecutive_failures, is_active          │\n                       └───────────────────────────────────────────────────────────────────────┘",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "section2-title",
+      "type": "text",
+      "x": 50,
+      "y": 590,
+      "width": 500,
+      "height": 30,
+      "text": "2. HOUR BUCKET DISTRIBUTION",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#1971c2"
+    },
+    {
+      "id": "bucket-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 630,
+      "width": 1300,
+      "height": 280,
+      "strokeColor": "#1971c2",
+      "backgroundColor": "#e7f5ff",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "bucket-content",
+      "type": "text",
+      "x": 70,
+      "y": 645,
+      "width": 600,
+      "height": 250,
+      "text": "5000 Products ÷ 24 Hours = ~208 per hour\n\n┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┐\n│ H0  │ H1  │ H2  │ H3  │ ... │ H21 │ H22 │ H23 │\n├─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┤\n│ 208 │ 209 │ 208 │ 209 │ ... │ 208 │ 209 │ 208 │\n│     │     │     │     │     │     │     │     │\n│00:00│01:00│02:00│03:00│     │21:00│22:00│23:00│\n└─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┘\n\nSCHEDULED SYNC processes:\n• ALWAYS ~208 products per hour\n• Load is GUARANTEED equal\n• Failed products go to RETRY SYNC",
+      "fontSize": 13,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+    {
+      "id": "bucket-assign",
+      "type": "text",
+      "x": 720,
+      "y": 645,
+      "width": 600,
+      "height": 250,
+      "text": "BUCKET ASSIGNMENT (Hash-Based)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nWhen new product published:\n\n  1. hour_bucket = hash(sku) % 24\n\n     Example:\n     SKU \"PN-12345\" → hash() → 14\n     This product ALWAYS syncs at 14:00 UTC\n\n  2. Assignment is PERMANENT\n     (never changes after publish)\n\n  3. hash() distributes products ~evenly\n     across 24 buckets\n\n✓ Simple and deterministic\n✓ No database query needed for assignment\n✓ Same SKU always gets same bucket",
+      "fontSize": 13,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "section3-title",
+      "type": "text",
+      "x": 50,
+      "y": 940,
+      "width": 700,
+      "height": 30,
+      "text": "3. SCHEDULED SYNC FLOW (EVERY HOUR AT :00)",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#2f9e44"
+    },
+    {
+      "id": "sched-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 980,
+      "width": 1300,
+      "height": 420,
+      "strokeColor": "#2f9e44",
+      "backgroundColor": "#ebfbee",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "sched-content",
+      "type": "text",
+      "x": 70,
+      "y": 995,
+      "width": 1260,
+      "height": 390,
+      "text": "SLOT 10 EXAMPLE (10:00 UTC)\n\n┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐\n│  10:00  CELERY BEAT TRIGGERS SCHEDULED SYNC                                                         │\n│         │                                                                                           │\n│         ▼                                                                                           │\n│  ┌─────────────────────────────────────────────────────────────────────────────────────────────┐    │\n│  │  DISPATCHER: Query product_sync_schedule                                                    │    │\n│  │                                                                                             │    │\n│  │  SELECT * FROM product_sync_schedule                                                        │    │\n│  │  WHERE hour_bucket = 10                        ◄── Only Slot 10 products                    │    │\n│  │  AND is_active = TRUE                                                                       │    │\n│  │  AND sync_status != 'syncing'                                                               │    │\n│  │  AND (last_successful_sync IS NULL                                                          │    │\n│  │       OR last_successful_sync < CURRENT_DATE)  ◄── Not synced successfully TODAY yet        │    │\n│  │                                                                                             │    │\n│  │  RETURNS: 208 products (EXACTLY this slot's products that haven't synced today)             │    │\n│  └─────────────────────────────────────────────────────────────────────────────────────────────┘    │\n│         │                                                                                           │\n│         ▼                                                                                           │\n│  ┌─────────────────────────────────────────────────────────────────────────────────────────────┐    │\n│  │  PROCESS: 21 batches × 10 SKUs at 2 req/min = 10.5 minutes                                  │    │\n│  │                                                                                             │    │\n│  │  180 SUCCESS: sync_status='success', last_successful_sync=TODAY                             │    │\n│  │  28 FAILED:   sync_status='failed', last_successful_sync UNCHANGED (still yesterday)        │    │\n│  │                                                                                             │    │\n│  │  KEY INSIGHT: Failed products keep last_successful_sync=YESTERDAY                           │    │\n│  │               They are NOT picked up again by scheduled sync today!                         │    │\n│  │               They go to RETRY SYNC instead.                                                │    │\n│  └─────────────────────────────────────────────────────────────────────────────────────────────┘    │\n│                                                                                                     │\n│  10:11  ═══ SCHEDULED SYNC COMPLETE ═══ Failed products picked up by RETRY SYNC at 10:30 ═══════    │\n└─────────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "section4-title",
+      "type": "text",
+      "x": 50,
+      "y": 1430,
+      "width": 700,
+      "height": 30,
+      "text": "4. RETRY SYNC FLOW (EVERY 4 HOURS AT :30)",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#e67700"
+    },
+    {
+      "id": "retry-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 1470,
+      "width": 1300,
+      "height": 380,
+      "strokeColor": "#e67700",
+      "backgroundColor": "#fff9db",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "retry-content",
+      "type": "text",
+      "x": 70,
+      "y": 1485,
+      "width": 1260,
+      "height": 350,
+      "text": "RETRY WINDOWS: 02:30, 06:30, 10:30, 14:30, 18:30, 22:30 (6 per day)\n\n┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐\n│  10:30  CELERY BEAT TRIGGERS RETRY SYNC                                                             │\n│         │                                                                                           │\n│         │   NOTE: Runs 30 minutes after scheduled sync to avoid collision                           │\n│         │                                                                                           │\n│         ▼                                                                                           │\n│  ┌─────────────────────────────────────────────────────────────────────────────────────────────┐    │\n│  │  DISPATCHER: Query ALL failed products (from ANY slot)                                      │    │\n│  │                                                                                             │    │\n│  │  SELECT * FROM product_sync_schedule                                                        │    │\n│  │  WHERE sync_status = 'failed'                  ◄── Failed products from ANY slot            │    │\n│  │  AND is_active = TRUE                                                                       │    │\n│  │  ORDER BY consecutive_failures ASC,            ◄── Prioritize: fewer failures first         │    │\n│  │           last_sync_at ASC                     ◄── Then oldest first                        │    │\n│  │  LIMIT 50                                      ◄── Cap per retry window                     │    │\n│  │                                                                                             │    │\n│  │  RETURNS: Up to 50 failed products (from Slot 2, Slot 5, Slot 10, etc.)                     │    │\n│  └─────────────────────────────────────────────────────────────────────────────────────────────┘    │\n│         │                                                                                           │\n│         ▼                                                                                           │\n│  ┌─────────────────────────────────────────────────────────────────────────────────────────────┐    │\n│  │  PROCESS: 5 batches × 10 SKUs = 2.5 minutes                                                 │    │\n│  │                                                                                             │    │\n│  │  40 RECOVERED: sync_status='success', last_successful_sync=TODAY, failures=0                │    │\n│  │  10 STILL FAIL: sync_status='failed', consecutive_failures++                                │    │\n│  │                 If consecutive_failures >= 5 → is_active=FALSE (deactivate)                 │    │\n│  └─────────────────────────────────────────────────────────────────────────────────────────────┘    │\n│                                                                                                     │\n│  10:33  ═══ RETRY SYNC COMPLETE ═══ Remaining failures picked up at 14:30 ══════════════════════    │\n└─────────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "section5-title",
+      "type": "text",
+      "x": 50,
+      "y": 1880,
+      "width": 700,
+      "height": 30,
+      "text": "5. 24-HOUR TIMING DIAGRAM",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#1864ab"
+    },
+    {
+      "id": "timing-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 1920,
+      "width": 1300,
+      "height": 340,
+      "strokeColor": "#1864ab",
+      "backgroundColor": "#d0ebff",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "timing-content",
+      "type": "text",
+      "x": 70,
+      "y": 1935,
+      "width": 1260,
+      "height": 310,
+      "text": "┌──────────┬──────────────────────────────┬──────────────────────────┬────────────────────────────────┐\n│  TIME    │  SCHEDULED SYNC              │  RETRY SYNC              │  TOTAL PRODUCTS                │\n├──────────┼──────────────────────────────┼──────────────────────────┼────────────────────────────────┤\n│  00:00   │  Slot 0: ~208 products       │                          │  208                           │\n│  01:00   │  Slot 1: ~208 products       │                          │  208                           │\n│  02:00   │  Slot 2: ~208 products       │                          │  208                           │\n│  02:30   │                              │  RETRY: 0-50 failed      │  0-50                          │\n│  03:00   │  Slot 3: ~208 products       │                          │  208                           │\n│  ...     │  ...                         │                          │  ...                           │\n│  06:00   │  Slot 6: ~208 products       │                          │  208                           │\n│  06:30   │                              │  RETRY: 0-50 failed      │  0-50                          │\n│  ...     │  ...                         │                          │  ...                           │\n│  10:00   │  Slot 10: ~208 products      │                          │  208                           │\n│  10:30   │                              │  RETRY: 0-50 failed      │  0-50                          │\n│  ...     │  (14:30, 18:30, 22:30)       │                          │  ...                           │\n│  23:00   │  Slot 23: ~208 products      │                          │  208                           │\n├──────────┴──────────────────────────────┴──────────────────────────┴────────────────────────────────┤\n│  SCHEDULED: 24 × 208 = 4,992 products/day (500 API calls)                                           │\n│  RETRY:     6 × 50 = 300 products/day max (30 API calls)                                            │\n│  TOTAL:     530 API calls/day max (well within 2,880 daily limit!)                                  │\n└─────────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "section6-title",
+      "type": "text",
+      "x": 50,
+      "y": 2290,
+      "width": 700,
+      "height": 30,
+      "text": "6. KEY FIELD: last_successful_sync (DATE)",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#9c36b5"
+    },
+    {
+      "id": "key-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 2330,
+      "width": 1300,
+      "height": 280,
+      "strokeColor": "#9c36b5",
+      "backgroundColor": "#f8f0fc",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "key-content",
+      "type": "text",
+      "x": 70,
+      "y": 2345,
+      "width": 1260,
+      "height": 250,
+      "text": "WHY last_successful_sync IS THE SECRET SAUCE:\n\nThis field tracks \"what DATE did this product last sync SUCCESSFULLY?\" (not attempt - SUCCESS)\n\n┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐\n│  SCHEDULED SYNC QUERY:                                                                              │\n│  SELECT * WHERE hour_bucket = X AND last_successful_sync < CURRENT_DATE                             │\n├─────────────────────────────────────────────────────────────────────────────────────────────────────┤\n│  HOW IT WORKS:                                                                                      │\n│                                                                                                     │\n│  • Product synced yesterday (last_successful_sync = '2024-01-14')                                   │\n│    Today = '2024-01-15' → '2024-01-14' < '2024-01-15' = TRUE → PICKED UP ✓                          │\n│                                                                                                     │\n│  • After successful sync: last_successful_sync = '2024-01-15' (TODAY)                               │\n│    Same day query: '2024-01-15' < '2024-01-15' = FALSE → NOT PICKED UP AGAIN TODAY                  │\n│                                                                                                     │\n│  • Product FAILED today: last_successful_sync = '2024-01-14' (UNCHANGED!)                           │\n│    Scheduled sync query: '2024-01-14' < '2024-01-15' = TRUE... BUT wait!                            │\n│    The product has sync_status = 'failed', so it goes to RETRY SYNC instead!                       │\n│                                                                                                     │\n│  RESULT: Each product in scheduled sync ONCE per day. Failed products handled separately.           │\n└─────────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "section7-title",
+      "type": "text",
+      "x": 50,
+      "y": 2640,
+      "width": 700,
+      "height": 30,
+      "text": "7. DATABASE SCHEMA",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#c92a2a"
+    },
+    {
+      "id": "schema-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 2680,
+      "width": 1300,
+      "height": 320,
+      "strokeColor": "#c92a2a",
+      "backgroundColor": "#fff5f5",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "schema-content",
+      "type": "text",
+      "x": 70,
+      "y": 2695,
+      "width": 1260,
+      "height": 290,
+      "text": "┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐\n│                               product_sync_schedule TABLE                                           │\n├─────────────────────────────────────────────────────────────────────────────────────────────────────┤\n│                                                                                                     │\n│  ┌────────────────────────┬──────────────────┬──────────────────────────────────────────────────┐   │\n│  │  COLUMN                │  TYPE            │  DESCRIPTION                                     │   │\n│  ├────────────────────────┼──────────────────┼──────────────────────────────────────────────────┤   │\n│  │  id                    │  UUID            │  Primary key                                     │   │\n│  │  user_id               │  TEXT            │  User who owns this product                      │   │\n│  │  sku                   │  TEXT            │  Product SKU (part number)                       │   │\n│  │  hour_bucket           │  SMALLINT (0-23) │  PERMANENT slot assignment                       │   │\n│  │  sync_status           │  TEXT            │  pending/syncing/success/failed                  │   │\n│  │  last_sync_at          │  TIMESTAMPTZ     │  Last sync ATTEMPT (any result)                  │   │\n│  │  last_successful_sync  │  DATE            │  Last SUCCESSFUL sync DATE ◄── KEY FIELD!        │   │\n│  │  last_boeing_hash      │  TEXT            │  MD5(price, qty, stock) for change detection     │   │\n│  │  last_price            │  NUMERIC         │  Last Boeing price                               │   │\n│  │  last_quantity         │  INTEGER         │  Last Boeing quantity                            │   │\n│  │  consecutive_failures  │  INTEGER         │  Count of consecutive failures (reset on success)│   │\n│  │  last_error            │  TEXT            │  Error message from last failure                 │   │\n│  │  is_active             │  BOOLEAN         │  FALSE after 5 consecutive failures              │   │\n│  └────────────────────────┴──────────────────┴──────────────────────────────────────────────────┘   │\n│                                                                                                     │\n│  INDEXES: (hour_bucket, last_successful_sync), (sync_status) WHERE sync_status = 'failed'           │\n└─────────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "section8-title",
+      "type": "text",
+      "x": 50,
+      "y": 3030,
+      "width": 700,
+      "height": 30,
+      "text": "8. EDGE CASE: MASS FAILURE SCENARIO",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#e67700"
+    },
+    {
+      "id": "edge-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 3070,
+      "width": 1300,
+      "height": 300,
+      "strokeColor": "#e67700",
+      "backgroundColor": "#fff9db",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "edge-content",
+      "type": "text",
+      "x": 70,
+      "y": 3085,
+      "width": 1260,
+      "height": 270,
+      "text": "SCENARIO: 100 products fail in Slot 10 (Boeing API having issues)\n\n┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐\n│  10:00 - SCHEDULED SYNC (Slot 10)                                                                   │\n│  • Processes 208 products → 108 succeed, 100 fail                                                   │\n│  • Failed: sync_status='failed', last_successful_sync='2024-01-14' (UNCHANGED)                      │\n├─────────────────────────────────────────────────────────────────────────────────────────────────────┤\n│  10:30 - RETRY SYNC (1st window)                                                                    │\n│  • Picks up 50 of 100 failed (LIMIT 50) → 40 recover, 10 still fail → 60 remaining                  │\n├─────────────────────────────────────────────────────────────────────────────────────────────────────┤\n│  11:00 - SCHEDULED SYNC (Slot 11) ← NOT Slot 10!                                                    │\n│  • Processes Slot 11's ~209 products                                                                │\n│  • Slot 10 failures NOT included! EQUAL DISTRIBUTION PRESERVED!                                     │\n├─────────────────────────────────────────────────────────────────────────────────────────────────────┤\n│  14:30 - RETRY SYNC (2nd window) → picks 50 of 60, 45 recover → 15 remaining                        │\n│  18:30 - RETRY SYNC (3rd window) → picks 15, 12 recover → 3 remaining                               │\n│  22:30 - RETRY SYNC (4th window) → picks 3, 2 recover, 1 deactivated (5 failures)                   │\n├─────────────────────────────────────────────────────────────────────────────────────────────────────┤\n│  RESULT: 99 recovered within same day via 4 retry windows, 1 needs manual review                    │\n│  OTHER SLOTS WERE NEVER AFFECTED! Equal distribution maintained throughout!                         │\n└─────────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "section9-title",
+      "type": "text",
+      "x": 50,
+      "y": 3400,
+      "width": 700,
+      "height": 30,
+      "text": "9. CONFIGURATION & SCALING",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#2f9e44"
+    },
+    {
+      "id": "config-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 3440,
+      "width": 1300,
+      "height": 260,
+      "strokeColor": "#2f9e44",
+      "backgroundColor": "#ebfbee",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "config-content",
+      "type": "text",
+      "x": 70,
+      "y": 3455,
+      "width": 600,
+      "height": 230,
+      "text": "CONFIGURATION\n━━━━━━━━━━━━━\n\n┌──────────────────────────┬────────────┐\n│  Scheduled sync          │ :00 hourly │\n│  Retry sync              │ :30 4-hrly │\n│  Retry limit per window  │    50      │\n│  Max consecutive failures│     5      │\n│  Boeing batch size       │  10 SKUs   │\n│  Boeing rate limit       │   2/min    │\n└──────────────────────────┴────────────┘\n\nCELERY BEAT SCHEDULE:\n• dispatch_scheduled_sync: crontab(minute=0, hour='*')\n• dispatch_retry_sync: crontab(minute=30, hour='2,6,10,14,18,22')\n• reset_stuck_syncing: crontab(minute=55, hour='*')",
+      "fontSize": 13,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+    {
+      "id": "scale-content",
+      "type": "text",
+      "x": 720,
+      "y": 3455,
+      "width": 600,
+      "height": 230,
+      "text": "SCALING CAPACITY\n━━━━━━━━━━━━━━━━\n\n┌───────────┬──────────┬──────────┬───────────┐\n│ PRODUCTS  │ PER HOUR │ API/HR   │ STATUS    │\n├───────────┼──────────┼──────────┼───────────┤\n│   1,000   │    42    │    5     │ ✓ Current │\n│   5,000   │   208    │   21     │ ✓ Target  │\n│  10,000   │   417    │   42     │ ✓ OK      │\n│  28,800   │ 1,200    │  120     │ ⚠ Max     │\n└───────────┴──────────┴──────────┴───────────┘\n\nRate limit: 2 req/min × 60 min = 120 req/hr\nScheduled: 21 calls/hr | Retry: 5 calls/hr max\nCurrent utilization: 26/120 = 21.7%\nPlenty of headroom for growth!",
+      "fontSize": 13,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "section10-title",
+      "type": "text",
+      "x": 50,
+      "y": 3730,
+      "width": 700,
+      "height": 30,
+      "text": "10. SUMMARY",
+      "fontSize": 24,
+      "fontFamily": 1,
+      "strokeColor": "#1971c2"
+    },
+    {
+      "id": "summary-box",
+      "type": "rectangle",
+      "x": 50,
+      "y": 3770,
+      "width": 1300,
+      "height": 200,
+      "strokeColor": "#1971c2",
+      "backgroundColor": "#e7f5ff",
+      "fillStyle": "solid",
+      "roundness": { "type": 3 }
+    },
+    {
+      "id": "summary-content",
+      "type": "text",
+      "x": 70,
+      "y": 3785,
+      "width": 1260,
+      "height": 170,
+      "text": "┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐\n│  ✓ EQUAL DISTRIBUTION    Scheduled sync ALWAYS processes ~208 products (failed go to retry)        │\n│  ✓ SAME-DAY RETRY        6 retry windows per day (every 4 hours at :30)                             │\n│  ✓ CAPPED RETRY LOAD     Maximum 50 products per retry window (prevents runaway)                    │\n│  ✓ CLEAR SEPARATION      Two independent processes with clear responsibilities                      │\n│  ✓ SCALABLE              Works for 10,000+ products (21.7% utilization at 5,000)                    │\n│  ✓ LOW MAINTENANCE       Fully automated, only manual review needed for 5+ day failures            │\n├─────────────────────────────────────────────────────────────────────────────────────────────────────┤\n│  BEST FOR: Equal distribution + multiple same-day retry windows + clear separation of concerns      │\n│  TRADE-OFF: Slightly more complex (two processes), retry takes ~4 hours between attempts            │\n│  ALTERNATIVE: See SYNC_SCHEDULER_COMPLETE_DESIGN for inline retry approach (faster retry)           │\n└─────────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "fontSize": 13,
+      "fontFamily": 3,
+      "strokeColor": "#1e1e1e"
+    },
+
+    {
+      "id": "footer",
+      "type": "text",
+      "x": 400,
+      "y": 4010,
+      "width": 600,
+      "height": 30,
+      "text": "Boeing Data Hub - Separate Retry Design v1.1",
+      "fontSize": 14,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "strokeColor": "#868e96"
+    }
+  ],
+  "appState": {
+    "gridSize": null,
+    "viewBackgroundColor": "#ffffff"
+  },
+  "files": {}
+}

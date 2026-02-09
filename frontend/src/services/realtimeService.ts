@@ -116,12 +116,31 @@ export function subscribeToStagingProducts(
 
 /**
  * Subscribe to all product_staging updates (for any status changes)
+ * Listens for both INSERT (new products extracted) and UPDATE (status changes)
  */
 export function subscribeToAllStagingUpdates(
-  onUpdate: ProductChangeCallback
+  onUpdate: ProductChangeCallback,
+  onInsert?: ProductChangeCallback
 ): RealtimeChannel {
   const channel = supabase
     .channel('all-staging-updates')
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'product_staging',
+      },
+      (payload) => {
+        console.log('[Realtime] Staging product inserted:', payload.new);
+        // Use onInsert callback if provided, otherwise use onUpdate for both
+        if (onInsert) {
+          onInsert(payload.new);
+        } else {
+          onUpdate(payload.new);
+        }
+      }
+    )
     .on(
       'postgres_changes',
       {
@@ -224,8 +243,10 @@ function transformBatchRecord(record: any): BatchStatusResponse {
       const completed = (record.normalized_count || 0) + (record.failed_count || 0);
       progressPercent = (completed / total) * 100;
     } else if (batchType === 'normalized') {
-      // Normalized stage: search is complete, show 100%
-      progressPercent = 100;
+      // Normalized stage: show actual normalized progress (normalized_count / total_items)
+      // This reflects how many items were successfully normalized out of total requested
+      const normalizedCount = record.normalized_count || 0;
+      progressPercent = (normalizedCount / total) * 100;
     } else if (batchType === 'publishing' || batchType === 'publish') {
       // Publishing stage: progress based on published items
       // Use publish_part_numbers length as total if available, otherwise use total_items
@@ -300,6 +321,160 @@ export async function fetchPublishedProducts(
     };
   } catch (err) {
     console.error('[Realtime] Error fetching published products:', err);
+    throw err;
+  }
+}
+
+/**
+ * Fetch part numbers with their actual processing status for a batch
+ * Uses the get_batch_part_numbers_with_status RPC
+ */
+export interface PartNumberStatus {
+  part_number: string;
+  status: 'pending' | 'fetched' | 'normalized' | 'published' | 'failed';
+  has_inventory: boolean;
+  has_price: boolean;
+}
+
+export async function fetchBatchPartNumberStatuses(
+  batchId: string
+): Promise<PartNumberStatus[]> {
+  try {
+    const { data, error } = await supabase.rpc('get_batch_part_numbers_with_status', {
+      p_batch_id: batchId,
+    });
+
+    if (error) {
+      console.error('[Realtime] RPC error:', error.message);
+      throw new Error(error.message || 'Failed to fetch part number statuses');
+    }
+
+    return (data || []) as PartNumberStatus[];
+  } catch (err) {
+    console.error('[Realtime] Error fetching part number statuses:', err);
+    throw err;
+  }
+}
+
+/**
+ * Fetch batch stats using the get_batch_stats RPC
+ * Returns real-time counts by querying product_staging directly
+ */
+export interface BatchStats {
+  batch_id: string;
+  batch_type: string;
+  status: string;
+  total_items: number;
+  extracted_count: number;
+  normalized_count: number;
+  published_count: number;
+  failed_count: number;
+  skipped_count: number;
+  progress_percent: number;
+}
+
+export async function fetchBatchStats(batchId: string): Promise<BatchStats | null> {
+  try {
+    const { data, error } = await supabase.rpc('get_batch_stats', {
+      p_batch_id: batchId,
+    });
+
+    if (error) {
+      console.error('[Realtime] RPC error:', error.message);
+      return null;
+    }
+
+    return data?.[0] as BatchStats || null;
+  } catch (err) {
+    console.error('[Realtime] Error fetching batch stats:', err);
+    return null;
+  }
+}
+
+/**
+ * Subscribe to real-time sync schedule updates
+ * Listens for changes to the product_sync_schedule table
+ */
+export type SyncScheduleChangeCallback = (record: any) => void;
+
+export function subscribeToSyncSchedule(
+  onUpdate: SyncScheduleChangeCallback
+): RealtimeChannel {
+  const channel = supabase
+    .channel('sync-schedule-changes')
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'product_sync_schedule',
+      },
+      (payload) => {
+        console.log('[Realtime] Sync schedule updated:', payload.new);
+        onUpdate(payload.new);
+      }
+    )
+    .subscribe((status) => {
+      console.log('[Realtime] Sync schedule subscription status:', status);
+    });
+
+  return channel;
+}
+
+/**
+ * Fetch sync schedule summary stats directly from Supabase
+ * Used for realtime dashboard updates
+ */
+export interface SyncScheduleSummary {
+  total: number;
+  active: number;
+  pending: number;
+  syncing: number;
+  success: number;
+  failed: number;
+}
+
+export async function fetchSyncScheduleSummary(): Promise<SyncScheduleSummary> {
+  try {
+    const { data, error } = await supabase
+      .from('product_sync_schedule')
+      .select('sync_status, is_active');
+
+    if (error) {
+      console.error('[Realtime] Error fetching sync summary:', error.message);
+      throw error;
+    }
+
+    const summary: SyncScheduleSummary = {
+      total: data?.length || 0,
+      active: 0,
+      pending: 0,
+      syncing: 0,
+      success: 0,
+      failed: 0,
+    };
+
+    for (const record of data || []) {
+      if (record.is_active) summary.active++;
+      switch (record.sync_status) {
+        case 'pending':
+          summary.pending++;
+          break;
+        case 'syncing':
+          summary.syncing++;
+          break;
+        case 'success':
+          summary.success++;
+          break;
+        case 'failed':
+          summary.failed++;
+          break;
+      }
+    }
+
+    return summary;
+  } catch (err) {
+    console.error('[Realtime] Error in fetchSyncScheduleSummary:', err);
     throw err;
   }
 }

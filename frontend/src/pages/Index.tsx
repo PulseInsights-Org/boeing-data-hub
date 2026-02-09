@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react';
-import { CloudDownload, ShoppingBag } from 'lucide-react';
+import { CloudDownload, ShoppingBag, RefreshCw } from 'lucide-react';
 import { Header } from '@/components/dashboard/Header';
 import { EditProductModal } from '@/components/dashboard/EditProductModal';
 import { ErrorAlert } from '@/components/dashboard/ErrorAlert';
 import { SearchPanel } from '@/components/dashboard/SearchPanel';
 import { PublishedProductsPanel } from '@/components/dashboard/PublishedProductsPanel';
+import { AutoSyncPanel } from '@/components/dashboard/AutoSyncPanel';
 import { useProducts } from '@/hooks/useProducts';
 import { useBulkOperations } from '@/hooks/useBulkOperations';
 import { usePublishedProducts } from '@/hooks/usePublishedProducts';
@@ -13,7 +14,7 @@ import { getStagingProducts, StagingProduct } from '@/services/bulkService';
 import { publishToShopify } from '@/services/shopifyService';
 import { cn } from '@/lib/utils';
 
-type Tab = 'search' | 'published';
+type Tab = 'search' | 'published' | 'autosync';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState<Tab>('search');
@@ -223,6 +224,18 @@ const Index = () => {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setActiveTab('autosync')}
+              className={cn(
+                "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
+                activeTab === 'autosync'
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+              )}
+            >
+              <RefreshCw className="h-4 w-4" />
+              Auto-Sync
+            </button>
           </nav>
         </div>
       </div>
@@ -261,6 +274,10 @@ const Index = () => {
           onRefresh={refreshPublished}
           onLoadMore={loadMorePublished}
         />
+      )}
+
+      {activeTab === 'autosync' && (
+        <AutoSyncPanel />
       )}
 
       <EditProductModal
