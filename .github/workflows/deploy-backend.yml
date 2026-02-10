@@ -89,8 +89,20 @@ jobs:
               exit 1
             fi
 
-            # Health check
-            curl -sf http://localhost:8000/health > /dev/null && echo "✅ Health check passed" || exit 1
+            # Health check with retry (uvicorn may take a few seconds to fully start)
+            echo "Waiting for health check..."
+            for i in 1 2 3 4 5; do
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "✅ Health check passed"
+                break
+              fi
+              if [ $i -eq 5 ]; then
+                echo "❌ Health check failed after 5 attempts"
+                exit 1
+              fi
+              echo "Attempt $i failed, retrying in 3s..."
+              sleep 3
+            done
             echo "🚀 Deployment successful!"
           EOF
 
