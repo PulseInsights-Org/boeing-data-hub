@@ -91,8 +91,8 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
         base_price = list_price if list_price is not None else net_price
         price = base_price * 1.1 if base_price is not None else None
 
-        supplier_name = item.get("supplierName") or ""
-        manufacturer = supplier_name or "Boeing"
+        supplier_name = item.get("supplierName") or "BDI"
+        manufacturer = supplier_name or "BDI"
         pma = (item.get("faaApprovalCode") or "").upper() == "PMA"
         condition = "NE"
         estimated_lead_time = 60
@@ -108,10 +108,12 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
         # Unit of measure
         base_uom = item.get("baseUOM") or ""
 
-        # Build description as concatenation of Part No, Description (name), Cert, Condition, UoM
+        # Build description as concatenation of Part No, Description (name), Manufacturer, Cert, Condition, UoM
         # Use stripped SKU for Shopify display
+        # Manufacturer is included if available (defaults to "BDI" if not provided by Boeing)
         body_html = f"""<p>Part No. {shopify_sku}</p>
 <p>Description: {name}</p>
+<p>Manufacturer: {manufacturer}</p>
 <p>Cert: {cert}</p>
 <p>Condition: {condition}</p>
 <p>Unit of Measure: {base_uom}</p>"""

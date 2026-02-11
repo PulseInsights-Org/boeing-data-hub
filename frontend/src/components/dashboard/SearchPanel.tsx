@@ -478,16 +478,16 @@ export function SearchPanel({
         // Check if all items were successfully normalized
         if (counts && counts.normalized < counts.total) {
           // Partial completion - not all items were normalized
-          if (status === 'completed') return 'Fetching & Normalizing';
+          if (status === 'completed') return 'Partially Normalized';
           if (status === 'failed') return 'Normalization Failed';
           if (status === 'cancelled') return 'Cancelled';
-          return 'Fetching & Normalizing';
+          return 'Normalizing';
         }
         // Full completion
-        if (status === 'completed') return 'Normalized \u2192 Ready to Publish';
+        if (status === 'completed') return 'Normalized → Ready to Publish';
         if (status === 'failed') return 'Normalization Failed';
         if (status === 'cancelled') return 'Cancelled';
-        return 'Normalized \u2192 Ready to Publish';
+        return 'Normalizing';
 
       case 'publishing':
       case 'publish':

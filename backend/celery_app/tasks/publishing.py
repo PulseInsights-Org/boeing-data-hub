@@ -21,7 +21,8 @@ from celery_app.tasks.base import (
     run_async,
     get_shopify_client,
     get_supabase_store,
-    get_batch_store
+    get_batch_store,
+    get_settings
 )
 from app.core.exceptions import RetryableError, NonRetryableError
 from app.db.sync_store import get_sync_store
@@ -140,6 +141,59 @@ def publish_product(self, batch_id: str, part_number: str, user_id: str = "syste
             raise NonRetryableError(
                 f"Product {part_number} has no inventory (quantity=0 or missing). Cannot publish to Shopify."
             )
+
+        # 3. Validate location mapping and reconstruct location_quantities from location_summary
+        # The DB stores location_summary (string) but not location_availabilities (array)
+        # So we parse the string to get location data for validation and inventory setting
+        settings = get_settings()
+        location_map = settings.shopify_location_map or {}
+        location_summary = record.get("location_summary") or ""
+        location_availabilities = record.get("location_availabilities") or []
+
+        # Parse location_summary string like "Dallas Central: 243; Miami, FL: 10" into location_quantities
+        parsed_locations = []
+        if location_summary:
+            for part in location_summary.split(";"):
+                part = part.strip()
+                if ":" in part:
+                    loc_name, qty_str = part.rsplit(":", 1)
+                    loc_name = loc_name.strip()
+                    try:
+                        qty = int(qty_str.strip())
+                    except ValueError:
+                        qty = 0
+                    if loc_name:
+                        parsed_locations.append({"location": loc_name, "quantity": qty})
+
+        # Use parsed_locations if location_availabilities is empty (DB doesn't store the array)
+        locations_to_check = location_availabilities if location_availabilities else parsed_locations
+
+        if locations_to_check:
+            unmapped_locations = []
+            for loc in locations_to_check:
+                loc_name = loc.get("location")
+                if loc_name and loc_name not in location_map:
+                    unmapped_locations.append(loc_name)
+
+            if unmapped_locations:
+                logger.warning(
+                    f"Product {part_number} has unmapped locations: {unmapped_locations}. "
+                    f"Available mappings: {list(location_map.keys())}"
+                )
+                raise NonRetryableError(
+                    f"Product {part_number} has location(s) '{', '.join(unmapped_locations)}' "
+                    f"with no Shopify mapping configured. Please add mapping to SHOPIFY_LOCATION_MAP "
+                    f"or create the location in Shopify. Cannot publish."
+                )
+
+            # Inject parsed location_quantities into record for Shopify inventory level setting
+            if parsed_locations:
+                record.setdefault("shopify", {})
+                record["shopify"]["location_quantities"] = parsed_locations
+                logger.info(f"Reconstructed location_quantities for {part_number}: {len(parsed_locations)} locations")
+        else:
+            # No location data at all - log warning but allow publish (inventory will go to default location)
+            logger.warning(f"Product {part_number} has no location data. Inventory will use default Shopify location.")
 
         # Check if already published (has shopify_product_id)
         existing_shopify_id = record.get("shopify_product_id")
