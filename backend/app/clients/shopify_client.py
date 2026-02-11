@@ -661,8 +661,7 @@ class ShopifyClient:
             "product": {
                 "title": title,
                 "body_html": body_html,
-                "vendor": "",
-                "product_type": "Aircraft Parts & Accessories",
+                "vendor": "BDI",
                 "tags": tags,
                 "images": images,
                 "variants": [

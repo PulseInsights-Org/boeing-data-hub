@@ -10,7 +10,7 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 env:
-  EC2_HOST: 54.234.36.109
+  EC2_HOST: 98.84.57.169
   EC2_USER: ubuntu
   DEPLOY_PATH: /home/ubuntu/boeing-data-hub/backend
 
