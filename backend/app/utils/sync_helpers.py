@@ -387,7 +387,7 @@ def extract_boeing_product_data(
                 "locations": locations,
                 "location_quantities": location_quantities,
                 "location_summary": location_summary,
-                "estimated_lead_time_days": 60,  # Default, matches boeing_normalize.py
+                "estimated_lead_time_days": None,
                 "boeing_raw": item,  # Keep raw for debugging
             }
 
@@ -422,7 +422,7 @@ def create_out_of_stock_data(sku: str) -> Dict[str, Any]:
         "locations": [],
         "location_quantities": [],
         "location_summary": None,
-        "estimated_lead_time_days": 60,
+        "estimated_lead_time_days": None,
         "is_missing_sku": True,  # Flag to indicate this is a missing SKU
     }
 

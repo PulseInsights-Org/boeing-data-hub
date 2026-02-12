@@ -95,7 +95,7 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
         manufacturer = supplier_name or "BDI"
         pma = (item.get("faaApprovalCode") or "").upper() == "PMA"
         condition = "NE"
-        estimated_lead_time = 60
+        estimated_lead_time = None
 
         # sku: Full SKU with variant suffix stored in database (e.g., "WF338109=K3")
         # shopify_sku: Stripped version for Shopify display (e.g., "WF338109")
