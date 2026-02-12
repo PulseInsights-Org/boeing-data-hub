@@ -169,28 +169,33 @@ def publish_product(self, batch_id: str, part_number: str, user_id: str = "syste
         locations_to_check = location_availabilities if location_availabilities else parsed_locations
 
         if locations_to_check:
-            unmapped_locations = []
+            mapped_locations = []
+            skipped_locations = []
             for loc in locations_to_check:
                 loc_name = loc.get("location")
-                if loc_name and loc_name not in location_map:
-                    unmapped_locations.append(loc_name)
+                if not loc_name:
+                    continue
+                if loc_name in location_map:
+                    mapped_locations.append(loc)
+                else:
+                    skipped_locations.append(loc_name)
 
-            if unmapped_locations:
+            if skipped_locations:
                 logger.warning(
-                    f"Product {part_number} has unmapped locations: {unmapped_locations}. "
-                    f"Available mappings: {list(location_map.keys())}"
-                )
-                raise NonRetryableError(
-                    f"Product {part_number} has location(s) '{', '.join(unmapped_locations)}' "
-                    f"with no Shopify mapping configured. Please add mapping to SHOPIFY_LOCATION_MAP "
-                    f"or create the location in Shopify. Cannot publish."
+                    f"Product {part_number} has non-mapped locations that will be skipped: {skipped_locations}. "
+                    f"Only publishing to mapped locations: {[l.get('location') for l in mapped_locations]}"
                 )
 
-            # Inject parsed location_quantities into record for Shopify inventory level setting
-            if parsed_locations:
-                record.setdefault("shopify", {})
-                record["shopify"]["location_quantities"] = parsed_locations
-                logger.info(f"Reconstructed location_quantities for {part_number}: {len(parsed_locations)} locations")
+            if not mapped_locations:
+                raise NonRetryableError(
+                    f"Product {part_number} is only available at non-mapped locations {skipped_locations}. "
+                    f"No publishable US inventory. Cannot publish."
+                )
+
+            # Inject only mapped locations into record for Shopify inventory level setting
+            record.setdefault("shopify", {})
+            record["shopify"]["location_quantities"] = mapped_locations
+            logger.info(f"Location quantities for {part_number}: {len(mapped_locations)} mapped, {len(skipped_locations)} skipped")
         else:
             # No location data at all - log warning but allow publish (inventory will go to default location)
             logger.warning(f"Product {part_number} has no location data. Inventory will use default Shopify location.")
