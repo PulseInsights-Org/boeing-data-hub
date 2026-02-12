@@ -11,7 +11,8 @@
       "Bash(python -m py_compile:*)",
       "Bash(del:*)",
       "Bash(python -c:*)",
-      "Bash(python -m pytest tests/test_sync_helpers.py -v --tb=short)"
+      "Bash(python -m pytest tests/test_sync_helpers.py -v --tb=short)",
+      "Bash(head:*)"
     ]
   }
 }

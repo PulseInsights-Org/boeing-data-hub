@@ -418,7 +418,7 @@ def _prepare_shopify_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "cert": "FAA 8130-3",
         "condition": record.get("condition") or "NE",
         "pma": record.get("pma"),
-        "estimated_lead_time_days": record.get("estimated_lead_time_days") or 3,
+        "estimated_lead_time_days": record.get("estimated_lead_time_days"),
         "trace": record.get("trace"),
         "expiration_date": record.get("expiration_date"),
         "notes": record.get("notes"),

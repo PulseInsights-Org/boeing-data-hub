@@ -562,8 +562,8 @@ class ShopifyClient:
         # Estimated lead time (in days) - Integer field
         estimated_lead_time = (
             shopify_data.get("estimated_lead_time_days")
-            or product.get("estimated_lead_time_days")
-            or 60  # Default to 60 days
+            if shopify_data.get("estimated_lead_time_days") is not None
+            else product.get("estimated_lead_time_days")
         )
         if estimated_lead_time is not None:
             metafields.append({
@@ -614,7 +614,7 @@ class ShopifyClient:
         schedule_b_code = product.get("schedule_b_code") or ""
         condition = product.get("condition") or "NE"
         pma = product.get("pma") or False
-        lead_time = product.get("estimated_lead_time_days") or product.get("estimatedLeadTimeDays") or 3
+        lead_time = product.get("estimated_lead_time_days") if product.get("estimated_lead_time_days") is not None else product.get("estimatedLeadTimeDays")
         trace = shopify_data.get("trace") or product.get("trace") or ""
         expiration_date = shopify_data.get("expiration_date") or product.get("expiration_date") or ""
         notes = shopify_data.get("notes") or product.get("notes") or ""
@@ -657,6 +657,15 @@ class ShopifyClient:
                 if loc.get("location") and loc.get("quantity") is not None
             )
 
+        # If we have location-specific quantities, set initial inventory to 0
+        # The actual inventory will be set at specific locations via _set_inventory_levels()
+        # This prevents duplicate inventory at both default location AND mapped locations
+        initial_inventory = 0 if location_quantities else int(inventory)
+        if location_quantities:
+            logger.info(f"shopify initial_inventory=0 (will set {len(location_quantities)} location(s) separately)")
+        else:
+            logger.info(f"shopify initial_inventory={initial_inventory} (no location data, using default location)")
+
         payload = {
             "product": {
                 "title": title,
@@ -669,7 +678,7 @@ class ShopifyClient:
                         "sku": part_number,
                         "price": str(price),
                         "inventory_management": "shopify",
-                        "inventory_quantity": int(inventory),
+                        "inventory_quantity": initial_inventory,
                         "weight": float(weight) if weight else 0,
                         "weight_unit": "kg" if weight_unit == "kg" else "lb",
                     }
