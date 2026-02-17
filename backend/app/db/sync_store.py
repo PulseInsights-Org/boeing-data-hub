@@ -48,6 +48,19 @@ class SyncStore:
             logger.error(f"Error getting total active products: {e}")
             return 0
 
+    def get_syncing_count(self) -> int:
+        """Count products currently in 'syncing' state."""
+        try:
+            result = self.client.table("product_sync_schedule") \
+                .select("id", count="exact") \
+                .eq("sync_status", "syncing") \
+                .eq("is_active", True) \
+                .execute()
+            return result.count or 0
+        except Exception as e:
+            logger.error(f"Error getting syncing count: {e}")
+            return 0
+
     def get_slot_counts(self) -> Dict[int, int]:
         """Product count per hour slot for active products."""
         try:
