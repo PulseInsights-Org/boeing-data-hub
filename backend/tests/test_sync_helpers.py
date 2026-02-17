@@ -13,19 +13,13 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 # Import the module under test
-from app.utils.sync_helpers import (
-    extract_boeing_product_data,
-    create_out_of_stock_data,
-    compute_boeing_hash,
-    compute_sync_hash,
-    should_update_shopify,
-    get_slot_distribution,
-    get_least_loaded_slot,
-    calculate_batch_groups,
-    get_current_bucket,
-    _to_float,
-    _to_int,
-)
+from app.utils.boeing_data_extract import extract_boeing_product_data, create_out_of_stock_data
+from app.utils.hash_utils import compute_boeing_hash, compute_sync_hash
+from app.utils.change_detection import should_update_shopify
+from app.utils.slot_manager import get_slot_distribution, get_least_loaded_slot
+from app.utils.batch_grouping import calculate_batch_groups
+from app.utils.schedule_helpers import get_current_bucket
+from app.utils.type_converters import to_float as _to_float, to_int as _to_int
 
 
 # =============================================================================
@@ -432,7 +426,7 @@ class TestBatchGroups:
 class TestCurrentBucket:
     """Test current bucket calculation based on sync mode."""
 
-    @patch("app.utils.sync_helpers.SYNC_MODE", "testing")
+    @patch("app.utils.schedule_helpers.SYNC_MODE", "testing")
     def test_testing_mode_minute_bucket(self):
         """Test that testing mode uses minute buckets."""
         from datetime import datetime
@@ -443,12 +437,12 @@ class TestCurrentBucket:
         mock_now.minute = 25
         mock_now.hour = 14
 
-        with mock_patch("app.utils.sync_helpers.datetime") as mock_dt:
+        with mock_patch("app.utils.schedule_helpers.datetime") as mock_dt:
             mock_dt.now.return_value = mock_now
             # Bucket should be 25 // 10 = 2
             # Note: get_current_bucket checks SYNC_MODE at module level
 
-    @patch("app.utils.sync_helpers.SYNC_MODE", "production")
+    @patch("app.utils.schedule_helpers.SYNC_MODE", "production")
     def test_production_mode_hour_bucket(self):
         """Test that production mode uses hour buckets."""
         # In production mode, bucket = current hour (0-23)

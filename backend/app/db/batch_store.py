@@ -1,12 +1,18 @@
 """
+Batch store — CRUD for pipeline batch tracking.
+
 Batch store for tracking bulk operation progress.
 
 This module provides CRUD operations for the batches table.
 All methods are synchronous to simplify Celery task code.
+Version: 1.0.0
 """
 import uuid
 import logging
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
+
+from supabase import create_client
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +35,6 @@ class BatchStore:
         Args:
             settings: Application settings containing Supabase credentials
         """
-        from supabase import create_client
         self.client = create_client(settings.supabase_url, settings.supabase_key)
         self.table = "batches"
 
@@ -46,7 +51,7 @@ class BatchStore:
         Create a new batch record.
 
         Args:
-            batch_type: "search" or "publish"
+            batch_type: "extract" or "publish"
             total_items: Total number of items to process
             idempotency_key: Optional client-provided key for duplicate prevention
             celery_task_id: Optional Celery task ID for the orchestrator
@@ -68,7 +73,6 @@ class BatchStore:
             "published_count": 0,
             "failed_count": 0,
             "failed_items": [],
-            "failed_part_numbers": [],
             "part_numbers": part_numbers or [],
             "celery_task_id": celery_task_id,
             "idempotency_key": idempotency_key,
@@ -152,7 +156,6 @@ class BatchStore:
 
         # Add completed_at timestamp when status is completed or failed
         if status in ("completed", "failed"):
-            from datetime import datetime, timezone
             update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
 
         self.client.table(self.table)\
@@ -174,7 +177,7 @@ class BatchStore:
 
         Args:
             batch_id: Batch identifier
-            batch_type: New batch type (e.g., 'search', 'normalized', 'publishing')
+            batch_type: New batch type (e.g., 'extract', 'normalize', 'publish')
             new_total_items: Optional new total items count (for when publishing fewer items than searched)
             publish_part_numbers: Optional list of part numbers to publish (subset of original part_numbers)
         """
@@ -256,59 +259,133 @@ class BatchStore:
         """
         self._increment_counter(batch_id, "published_count", count)
 
+    def record_skipped(
+        self,
+        batch_id: str,
+        part_numbers: List[str],
+    ) -> None:
+        """
+        Record blocked/skipped part numbers in the batch.
+
+        Increments skipped_count and appends to skipped_part_numbers.
+        These are products that exist in product_staging with status='blocked'
+        (no price or no inventory) — distinct from failed items which are
+        actual errors.
+
+        Args:
+            batch_id: Batch identifier
+            part_numbers: List of blocked part numbers to record as skipped
+        """
+        if not part_numbers:
+            return
+        try:
+            result = self.client.table(self.table)\
+                .select("skipped_count, skipped_part_numbers")\
+                .eq("id", batch_id)\
+                .execute()
+
+            if not result.data:
+                logger.warning(f"Batch {batch_id} not found for recording skipped parts")
+                return
+
+            batch = result.data[0]
+            current_count = batch.get("skipped_count") or 0
+            current_pns = batch.get("skipped_part_numbers") or []
+
+            self.client.table(self.table)\
+                .update({
+                    "skipped_count": current_count + len(part_numbers),
+                    "skipped_part_numbers": current_pns + part_numbers,
+                })\
+                .eq("id", batch_id)\
+                .execute()
+
+            logger.info(f"Recorded {len(part_numbers)} skipped parts in batch {batch_id}")
+
+        except Exception as e:
+            # Never let record_skipped crash the calling task
+            logger.error(f"Failed to record skipped parts in batch {batch_id}: {e}")
+
     def record_failure(
         self,
         batch_id: str,
         part_number: str,
-        error: str
+        error: str,
+        stage: str = "unknown",
+        _max_attempts: int = 3,
     ) -> None:
         """
-        Record a failed item.
+        Record a failed item with pipeline stage and timestamp.
 
-        Appends to failed_items JSONB array, failed_part_numbers TEXT[] array,
-        and increments failed_count.
+        Appends to failed_items JSONB array and increments failed_count.
+        Each entry contains: part_number, error, stage, timestamp.
+        Retries up to _max_attempts on transient errors to prevent
+        silent loss of failure records.
 
         Args:
             batch_id: Batch identifier
             part_number: Part number that failed
             error: Error message describing the failure
+            stage: Pipeline stage (extraction, normalization, publishing)
+            _max_attempts: Number of retry attempts for transient errors
         """
-        # Get current batch data
-        result = self.client.table(self.table)\
-            .select("failed_items, failed_part_numbers, failed_count")\
-            .eq("id", batch_id)\
-            .execute()
+        import time
 
-        if not result.data:
-            logger.warning(f"Batch {batch_id} not found for recording failure")
-            return
+        for attempt in range(_max_attempts):
+            try:
+                result = self.client.table(self.table)\
+                    .select("failed_items, failed_count")\
+                    .eq("id", batch_id)\
+                    .execute()
 
-        batch = result.data[0]
-        failed_items = batch.get("failed_items") or []
-        failed_part_numbers = batch.get("failed_part_numbers") or []
-        failed_count = batch.get("failed_count") or 0
+                if not result.data:
+                    logger.warning(f"Batch {batch_id} not found for recording failure")
+                    return
 
-        # Append new failure
-        failed_items.append({
-            "part_number": part_number,
-            "error": error
-        })
+                batch = result.data[0]
+                failed_items = batch.get("failed_items") or []
+                failed_count = batch.get("failed_count") or 0
 
-        # Also track just the part number for easy querying
-        if part_number not in failed_part_numbers:
-            failed_part_numbers.append(part_number)
+                # Prevent duplicate entries for the same part number
+                already_recorded = any(
+                    item.get("part_number") == part_number
+                    for item in failed_items
+                )
+                if already_recorded:
+                    logger.info(f"Failure for {part_number} already recorded in batch {batch_id}, skipping")
+                    return
 
-        # Update batch
-        self.client.table(self.table)\
-            .update({
-                "failed_items": failed_items,
-                "failed_part_numbers": failed_part_numbers,
-                "failed_count": failed_count + 1
-            })\
-            .eq("id", batch_id)\
-            .execute()
+                failed_items.append({
+                    "part_number": part_number,
+                    "error": error,
+                    "stage": stage,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
 
-        logger.warning(f"Recorded failure for {part_number} in batch {batch_id}: {error}")
+                self.client.table(self.table)\
+                    .update({
+                        "failed_items": failed_items,
+                        "failed_count": failed_count + 1
+                    })\
+                    .eq("id", batch_id)\
+                    .execute()
+
+                logger.warning(f"Recorded {stage} failure for {part_number} in batch {batch_id}: {error}")
+                return  # Success
+
+            except Exception as e:
+                if attempt < _max_attempts - 1:
+                    logger.warning(
+                        f"record_failure attempt {attempt + 1}/{_max_attempts} failed for "
+                        f"{part_number} in batch {batch_id}: {e}. Retrying..."
+                    )
+                    time.sleep(0.5 * (attempt + 1))
+                else:
+                    # Final attempt failed — log critically but don't crash caller
+                    logger.error(
+                        f"Failed to record failure for {part_number} in batch "
+                        f"{batch_id} after {_max_attempts} attempts: {e}"
+                    )
 
     def list_batches(
         self,

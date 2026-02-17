@@ -177,6 +177,7 @@ CREATE TABLE IF NOT EXISTS public.batches (
   published_count INTEGER DEFAULT 0,
   failed_count INTEGER DEFAULT 0,
   error_message TEXT,
+  -- Each entry: {"part_number", "error", "stage", "timestamp"}
   failed_items JSONB DEFAULT '[]',
   celery_task_id VARCHAR(100),
   idempotency_key VARCHAR(100),
@@ -186,9 +187,11 @@ CREATE TABLE IF NOT EXISTS public.batches (
   user_id VARCHAR(50) NOT NULL DEFAULT 'system',
   part_numbers JSONB DEFAULT '[]',
   publish_part_numbers TEXT[],
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  skipped_part_numbers TEXT[] DEFAULT '{}',
   CONSTRAINT batches_idempotency_key_unique UNIQUE (idempotency_key),
   CONSTRAINT batches_batch_type_check CHECK (
-    batch_type IN ('search', 'normalized', 'publishing', 'publish')
+    batch_type IN ('extract', 'normalize', 'publish')
   ),
   CONSTRAINT batches_status_check CHECK (
     status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')
@@ -348,11 +351,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Atomically increment failed_count and append to failed_items
+-- Atomically increment failed_count and append to failed_items with stage + timestamp
 CREATE OR REPLACE FUNCTION record_batch_failure(
   p_batch_id VARCHAR(36),
   p_part_number TEXT,
-  p_error TEXT
+  p_error TEXT,
+  p_stage TEXT DEFAULT 'unknown'
 )
 RETURNS VOID AS $$
 BEGIN
@@ -360,7 +364,12 @@ BEGIN
   SET
     failed_count = COALESCE(failed_count, 0) + 1,
     failed_items = COALESCE(failed_items, '[]'::jsonb) ||
-      jsonb_build_object('part_number', p_part_number, 'error', p_error),
+      jsonb_build_object(
+        'part_number', p_part_number,
+        'error', p_error,
+        'stage', p_stage,
+        'timestamp', now()::text
+      ),
     updated_at = now()
   WHERE id = p_batch_id;
 END;
@@ -401,9 +410,9 @@ BEGIN
   -- Count products by status from product_staging
   SELECT
     COUNT(*) FILTER (WHERE ps.status IS NOT NULL),
-    COUNT(*) FILTER (WHERE ps.status IN ('fetched', 'normalized', 'published')),
+    COUNT(*) FILTER (WHERE ps.status IN ('fetched', 'normalized', 'published', 'blocked', 'failed')),
     COUNT(*) FILTER (WHERE ps.status = 'published'),
-    COUNT(*) FILTER (WHERE ps.status = 'failed')
+    COUNT(*) FILTER (WHERE ps.status IN ('blocked', 'failed'))
   INTO v_extracted, v_normalized, v_published, v_failed
   FROM public.product_staging ps
   WHERE ps.batch_id = p_batch_id;
@@ -484,11 +493,11 @@ BEGIN
   v_total_for_progress := v_batch.total_items;
   IF v_total_for_progress > 0 THEN
     CASE v_batch.batch_type
-      WHEN 'search' THEN
+      WHEN 'extract' THEN
         v_progress := ((v_normalized + v_failed)::NUMERIC / v_total_for_progress) * 100;
-      WHEN 'normalized' THEN
+      WHEN 'normalize' THEN
         v_progress := 100;
-      WHEN 'publishing', 'publish' THEN
+      WHEN 'publish' THEN
         -- Use publish_part_numbers length if available
         IF v_batch.publish_part_numbers IS NOT NULL AND jsonb_array_length(v_batch.publish_part_numbers::jsonb) > 0 THEN
           v_total_for_progress := jsonb_array_length(v_batch.publish_part_numbers::jsonb);
@@ -638,9 +647,9 @@ BEGIN
 
   -- Calculate total processed
   CASE v_batch.batch_type
-    WHEN 'search' THEN
+    WHEN 'extract' THEN
       v_total_processed := v_batch.normalized_count + v_batch.failed_count;
-    WHEN 'publishing', 'publish' THEN
+    WHEN 'publish' THEN
       v_total_processed := v_batch.published_count + v_batch.failed_count;
     ELSE
       v_total_processed := v_batch.normalized_count + v_batch.failed_count;

@@ -135,7 +135,7 @@ export interface HourlyStatsResponse {
  * Fetch complete sync dashboard data
  */
 export async function fetchSyncDashboard(): Promise<SyncDashboardData> {
-  const url = new URL('/api/sync/dashboard', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/sync/dashboard', API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'GET',
@@ -170,7 +170,7 @@ export async function fetchSyncProducts(
     search?: string;
   } = {}
 ): Promise<SyncProductsResponse> {
-  const url = new URL('/api/sync/products', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/sync/products', API_BASE_URL || window.location.origin);
 
   if (options.limit) url.searchParams.set('limit', options.limit.toString());
   if (options.offset) url.searchParams.set('offset', options.offset.toString());
@@ -206,7 +206,7 @@ export async function fetchSyncHistory(
   limit: number = 50,
   hoursBack: number = 24
 ): Promise<SyncHistoryResponse> {
-  const url = new URL('/api/sync/history', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/sync/history', API_BASE_URL || window.location.origin);
   url.searchParams.set('limit', limit.toString());
   url.searchParams.set('hours_back', hoursBack.toString());
 
@@ -237,7 +237,7 @@ export async function fetchFailedProducts(
   limit: number = 50,
   includeInactive: boolean = false
 ): Promise<FailedProductsResponse> {
-  const url = new URL('/api/sync/failures', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/sync/failures', API_BASE_URL || window.location.origin);
   url.searchParams.set('limit', limit.toString());
   url.searchParams.set('include_inactive', includeInactive.toString());
 
@@ -265,7 +265,7 @@ export async function fetchFailedProducts(
  * Fetch hourly stats breakdown
  */
 export async function fetchHourlyStats(): Promise<HourlyStatsResponse> {
-  const url = new URL('/api/sync/hourly-stats', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/sync/hourly-stats', API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'GET',
@@ -291,7 +291,7 @@ export async function fetchHourlyStats(): Promise<HourlyStatsResponse> {
  * Get sync status for a specific product
  */
 export async function fetchProductSyncStatus(sku: string): Promise<SyncProduct> {
-  const url = new URL(`/api/sync/product/${encodeURIComponent(sku)}`, API_BASE_URL || window.location.origin);
+  const url = new URL(`/api/v1/sync/product/${encodeURIComponent(sku)}`, API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'GET',
@@ -320,7 +320,7 @@ export async function fetchProductSyncStatus(sku: string): Promise<SyncProduct> 
  * Reactivate a deactivated product
  */
 export async function reactivateProduct(sku: string): Promise<{ message: string; sku: string }> {
-  const url = new URL(`/api/sync/product/${encodeURIComponent(sku)}/reactivate`, API_BASE_URL || window.location.origin);
+  const url = new URL(`/api/v1/sync/product/${encodeURIComponent(sku)}/reactivate`, API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'POST',
@@ -346,7 +346,7 @@ export async function reactivateProduct(sku: string): Promise<{ message: string;
  * Trigger immediate sync for a product
  */
 export async function triggerImmediateSync(sku: string): Promise<{ status: string; sku: string; message: string }> {
-  const url = new URL(`/api/sync/trigger/${encodeURIComponent(sku)}`, API_BASE_URL || window.location.origin);
+  const url = new URL(`/api/v1/sync/trigger/${encodeURIComponent(sku)}`, API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'POST',

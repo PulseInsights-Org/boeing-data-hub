@@ -367,7 +367,8 @@ class TestFieldMappingIntegration:
 
     def test_extract_and_hash_consistency(self, sample_boeing_response):
         """Test that extracted data hashes consistently."""
-        from app.utils.sync_helpers import extract_boeing_product_data, compute_boeing_hash
+        from app.utils.boeing_data_extract import extract_boeing_product_data
+        from app.utils.hash_utils import compute_boeing_hash
 
         # Extract data
         data = extract_boeing_product_data(sample_boeing_response, "WF338109=K3")
@@ -380,7 +381,8 @@ class TestFieldMappingIntegration:
 
     def test_out_of_stock_data_hashes_correctly(self):
         """Test that out-of-stock data produces valid hash."""
-        from app.utils.sync_helpers import create_out_of_stock_data, compute_boeing_hash
+        from app.utils.boeing_data_extract import create_out_of_stock_data
+        from app.utils.hash_utils import compute_boeing_hash
 
         data = create_out_of_stock_data("MISSING123")
         hash_value = compute_boeing_hash(data)
@@ -397,7 +399,7 @@ class TestFieldMappingIntegration:
         - locationAvailabilities (not availability)
         - availQuantity (not availableQuantity)
         """
-        from app.utils.sync_helpers import extract_boeing_product_data
+        from app.utils.boeing_data_extract import extract_boeing_product_data
 
         data = extract_boeing_product_data(sample_boeing_response, "WF338109=K3")
 
@@ -421,7 +423,7 @@ class TestEdgeCases:
 
     def test_extract_product_with_null_locations(self):
         """Test extraction when locationAvailabilities is null."""
-        from app.utils.sync_helpers import extract_boeing_product_data
+        from app.utils.boeing_data_extract import extract_boeing_product_data
 
         response = {
             "currency": "USD",
@@ -442,7 +444,7 @@ class TestEdgeCases:
 
     def test_extract_product_with_zero_price(self):
         """Test extraction when price is zero (should be None)."""
-        from app.utils.sync_helpers import extract_boeing_product_data
+        from app.utils.boeing_data_extract import extract_boeing_product_data
 
         response = {
             "currency": "USD",
@@ -464,7 +466,7 @@ class TestEdgeCases:
 
     def test_hash_handles_none_values(self):
         """Test that hash handles None values correctly."""
-        from app.utils.sync_helpers import compute_sync_hash
+        from app.utils.hash_utils import compute_sync_hash
 
         hash1 = compute_sync_hash(
             price=None,
@@ -485,7 +487,7 @@ class TestEdgeCases:
 
     def test_location_summary_format(self, sample_boeing_response):
         """Test that location summary has correct format."""
-        from app.utils.sync_helpers import extract_boeing_product_data
+        from app.utils.boeing_data_extract import extract_boeing_product_data
 
         data = extract_boeing_product_data(sample_boeing_response, "WF338109=K3")
 

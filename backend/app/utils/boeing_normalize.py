@@ -1,27 +1,13 @@
+"""
+Boeing normalization — transforms raw Boeing API data to staging format.
+Version: 1.0.0
+"""
 import logging
 from typing import Any, Dict, List
 
+from app.utils.type_converters import to_float as _to_float, to_int as _to_int
 
 logger = logging.getLogger("boeing_normalize")
-
-
-def _to_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        val = float(value)
-        return val if val != 0 else None
-    except Exception:
-        return None
-
-
-def _to_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except Exception:
-        return None
 
 
 def _strip_variant_suffix(part_number: str) -> str:
@@ -118,6 +104,12 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
 <p>Condition: {condition}</p>
 <p>Unit of Measure: {base_uom}</p>"""
 
+        # Determine initial status: "blocked" if product is clearly unpublishable
+        # Price must be > 0 (not just non-None) to be considered valid
+        has_valid_price = (list_price is not None and list_price > 0) or (net_price is not None and net_price > 0)
+        has_inventory = inventory_quantity is not None and inventory_quantity > 0
+        initial_status = "fetched" if (has_valid_price and has_inventory) else "blocked"
+
         boeing_image_url = item.get("productImage")
         boeing_thumbnail_url = item.get("thumbnailImage")
 
@@ -135,6 +127,7 @@ def normalize_boeing_payload(query: str, payload: Dict[str, Any]) -> List[Dict[s
         normalized.append(
             {
                 "aviall_part_number": part_number,
+                "status": initial_status,
                 # Note: sku field now stores FULL SKU with variant suffix (e.g., "WF338109=K3")
                 # Shopify worker will strip suffix when publishing
                 "base_uom": item.get("baseUOM"),

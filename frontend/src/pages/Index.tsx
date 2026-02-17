@@ -159,7 +159,7 @@ const Index = () => {
   // Only publishes products that have inventory > 0 and price > 0
   const handleBulkPublishBatch = async (batchId: string, products: NormalizedProduct[]): Promise<string | null> => {
     const publishableProducts = products.filter(p => {
-      if (p.status === 'published') return false;
+      if (p.status === 'published' || p.status === 'blocked') return false;
       const hasInventory = p.inventory !== null && p.inventory !== undefined && p.inventory > 0;
       const hasPrice = (p.price !== null && p.price !== undefined && p.price > 0) ||
                        (p.net_price !== null && p.net_price !== undefined && p.net_price > 0) ||

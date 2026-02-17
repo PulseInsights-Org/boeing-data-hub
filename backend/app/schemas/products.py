@@ -1,3 +1,7 @@
+"""
+Product schemas — staging and published product models.
+Version: 1.0.0
+"""
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel

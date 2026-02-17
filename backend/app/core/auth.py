@@ -1,8 +1,11 @@
 """
+Authentication — JWT/Cognito token verification for route protection.
+
 Authentication Module for Boeing Data Hub
 
 Uses AWS Cognito for authentication via SSO from Aviation Gateway.
 Supabase is used only for data operations, not authentication.
+Version: 1.0.0
 """
 import logging
 from typing import Optional, List

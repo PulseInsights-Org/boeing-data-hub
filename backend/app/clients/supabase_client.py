@@ -1,8 +1,10 @@
+"""
+Supabase HTTP client — database and storage bucket access.
+Version: 1.0.0
+"""
 import logging
 from typing import Any
-
 from supabase import create_client, Client
-
 from app.core.config import Settings
 
 logger = logging.getLogger("supabase_client")
