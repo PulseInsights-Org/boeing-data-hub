@@ -21,7 +21,7 @@ from app.utils.slot_manager import get_slot_distribution, MAX_SKUS_PER_API_CALL
 from app.utils.batch_grouping import calculate_batch_groups
 from app.utils.schedule_helpers import get_current_hour_utc
 from app.utils.cycle_tracker import record_bucket_dispatched
-from app.celery_app.tasks.report_generation import generate_cycle_report
+from app.celery_app.tasks.report_generation import wait_for_cycle_completion
 from app.utils.dispatch_lock import (
     acquire_dispatch_lock,
     release_dispatch_lock,
@@ -202,8 +202,8 @@ def dispatch_hourly(self):
         try:
             cycle_complete = record_bucket_dispatched(current_bucket)
             if cycle_complete:
-                generate_cycle_report.delay()
-                logger.info("Sync cycle complete — report generation task queued")
+                wait_for_cycle_completion.delay()
+                logger.info("Sync cycle complete — waiting for products to finish before report")
         except Exception as tracker_err:
             logger.warning(f"Cycle tracker error (non-fatal): {tracker_err}")
 

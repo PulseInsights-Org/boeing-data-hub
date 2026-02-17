@@ -52,7 +52,13 @@ jobs:
       - name: Install dependencies and restart services
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
-            cd /home/ubuntu/boeing-data-hub/backend
+            cd /home/ubuntu/boeing-data-hub
+
+            # Sync git history so 'git log' reflects the latest commit
+            git fetch origin main
+            git reset --hard origin/main
+
+            cd backend
 
             # Install dependencies
             source venv/bin/activate

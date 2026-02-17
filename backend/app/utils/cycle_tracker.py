@@ -109,6 +109,50 @@ def get_cycle_progress(redis_url: str | None = None) -> Dict[str, Any]:
     }
 
 
+def record_product_change(
+    sku: str,
+    reason: str,
+    redis_url: str | None = None,
+) -> None:
+    """Record a product change during the current sync cycle.
+
+    Stored in a Redis hash keyed by cycle, so the report can later
+    list every SKU that was actually pushed to Shopify and why.
+
+    Args:
+        sku: The product SKU that changed.
+        reason: Human-readable change reason (e.g. "price: 100→110; quantity: 50→45").
+        redis_url: Optional Redis URL override.
+    """
+    r = _get_redis(redis_url)
+    cycle_key = _get_cycle_key(r)
+    changes_key = f"{cycle_key}:changes"
+    r.hset(changes_key, sku, reason)
+    r.expire(changes_key, CYCLE_TTL)
+
+
+def get_cycle_changes(
+    cycle_id: str | None = None,
+    redis_url: str | None = None,
+) -> Dict[str, str]:
+    """Get all product changes recorded during a sync cycle.
+
+    Args:
+        cycle_id: Optional cycle key. If None, uses current cycle.
+        redis_url: Optional Redis URL override.
+
+    Returns:
+        Dict mapping SKU → change reason string.
+    """
+    r = _get_redis(redis_url)
+    if cycle_id:
+        changes_key = f"{cycle_id}:changes"
+    else:
+        cycle_key = _get_cycle_key(r)
+        changes_key = f"{cycle_key}:changes"
+    return r.hgetall(changes_key) or {}
+
+
 def reset_cycle(redis_url: str | None = None) -> str:
     """Manually reset the current cycle and start a new one.
 

@@ -28,6 +28,7 @@ from app.utils.hash_utils import compute_boeing_hash
 from app.utils.boeing_data_extract import extract_boeing_product_data, create_out_of_stock_data
 from app.utils.change_detection import should_update_shopify
 from app.celery_app.tasks.sync_shopify import update_shopify_product
+from app.utils.cycle_tracker import record_product_change
 from app.clients.boeing_client import BoeingClient
 from app.utils.dispatch_lock import acquire_batch_lock, release_batch_lock, compute_batch_hash
 
@@ -112,6 +113,7 @@ def process_boeing_batch(self, skus: List[str], user_id: str, source_hour: int):
                 )
 
                 if should_update:
+                    record_product_change(sku, reason)
                     update_shopify_product.delay(sku, user_id, product_data)
                     success_count += 1
                     logger.debug(f"Queued Shopify update for {sku}: {reason}")

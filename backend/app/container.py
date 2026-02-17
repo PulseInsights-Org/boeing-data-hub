@@ -145,7 +145,6 @@ def get_report_store():
 @lru_cache(maxsize=1)
 def get_report_service():
     return ReportService(
-        gemini=get_gemini_client(),
         resend_client=get_resend_client(),
         report_store=get_report_store(),
         supabase_client=get_supabase_client(),

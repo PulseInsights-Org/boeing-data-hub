@@ -18,6 +18,7 @@ from app.utils.boeing_data_extract import extract_boeing_product_data, create_ou
 from app.utils.change_detection import should_update_shopify
 from app.utils.hash_utils import compute_boeing_hash
 from app.core.exceptions import RetryableError
+from app.utils.cycle_tracker import record_product_change
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class BoeingFetchService:
                 )
 
                 if should_update:
+                    record_product_change(sku, reason)
                     if shopify_update_callback:
                         shopify_update_callback(sku, user_id, product_data)
                     success_count += 1
