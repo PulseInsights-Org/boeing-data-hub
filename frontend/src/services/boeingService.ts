@@ -20,7 +20,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
  * and calling the Boeing product search endpoint.
  */
 export const searchProducts = async (params: ProductSearchParams): Promise<BoeingProduct[]> => {
-  const url = new URL('/api/boeing/product-search', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/extraction/search', API_BASE_URL || window.location.origin);
   url.searchParams.set('query', params.query);
 
   const response = await fetch(url.toString(), {

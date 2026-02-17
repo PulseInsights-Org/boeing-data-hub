@@ -453,54 +453,27 @@ export function SearchPanel({
     return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Format batch type for display - shows pipeline stage with status awareness
-  // batch_type = pipeline stage: 'search' (extraction+normalization), 'normalized' (ready for publish), 'publishing'
-  // status = workflow state: 'pending', 'processing', 'completed', 'failed', 'cancelled'
-  // Also considers counts to show accurate labels (e.g., "Partially Normalized" when not all items extracted)
+  // Format batch type for display — simple pipeline stage names
+  // batch_type = pipeline stage: 'extract', 'normalize', 'publish'
+  // The status badge next to the label shows processing/completed/failed/cancelled
   const formatBatchType = (
     batchType: string,
     status: BatchStatus,
     counts?: { total: number; extracted: number; normalized: number; published: number }
   ) => {
-    // Handle each batch_type with its possible statuses
     switch (batchType) {
-      case 'search':
-        // Search stage: extraction + normalization in progress
-        if (status === 'pending') return 'Fetch Pending';
-        if (status === 'processing') return 'Fetching';
-        if (status === 'completed') return 'Fetched & Normalized';
-        if (status === 'failed') return 'Fetch Failed';
-        if (status === 'cancelled') return 'Fetch Cancelled';
-        return 'Fetching';
+      case 'extract':
+        if (status === 'failed') return 'Extraction Failed';
+        if (status === 'cancelled') return 'Extraction Cancelled';
+        return 'Extraction';
 
-      case 'normalized':
-        // Normalized stage: extraction complete, ready for publishing
-        // Check if all items were successfully normalized
-        if (counts && counts.normalized < counts.total) {
-          // Partial completion - not all items were normalized
-          if (status === 'completed') return 'Partially Normalized';
-          if (status === 'failed') return 'Normalization Failed';
-          if (status === 'cancelled') return 'Cancelled';
-          return 'Normalizing';
-        }
-        // Full completion
-        if (status === 'completed') return 'Normalized → Ready to Publish';
+      case 'normalize':
         if (status === 'failed') return 'Normalization Failed';
-        if (status === 'cancelled') return 'Cancelled';
-        return 'Normalizing';
+        if (status === 'cancelled') return 'Normalization Cancelled';
+        return 'Normalization';
 
-      case 'publishing':
       case 'publish':
-        // Publishing stage: pushing to Shopify
-        if (status === 'pending') return 'Publish Pending';
-        if (status === 'processing') return 'Publishing';
-        if (status === 'completed') {
-          // Check if all items were published
-          if (counts && counts.published < counts.normalized) {
-            return 'Published';
-          }
-          return 'Published';
-        }
+        if (status === 'completed') return 'Published';
         if (status === 'failed') return 'Publish Failed';
         if (status === 'cancelled') return 'Publish Cancelled';
         return 'Publishing';
@@ -673,7 +646,7 @@ export function SearchPanel({
             {activeBatches
               // Show all pipeline batches (search, normalized, publishing)
               // Filter out old-style standalone "publish" batches (legacy)
-              .filter(batch => ['search', 'normalized', 'publishing'].includes(batch.batch_type))
+              .filter(batch => ['extract', 'normalize', 'publish'].includes(batch.batch_type))
               .slice(0, 10)
               .map(batch => {
               const hasProducts = batchProducts[batch.id] && batchProducts[batch.id].length > 0;
@@ -683,7 +656,7 @@ export function SearchPanel({
               // - Has a price > 0 (price, net_price, or cost_per_item)
               const unpublishedCount = hasProducts
                 ? batchProducts[batch.id].filter(p => {
-                    if (p.status === 'published') return false;
+                    if (p.status === 'published' || p.status === 'blocked') return false;
                     const hasInventory = p.inventory !== null && p.inventory !== undefined && p.inventory > 0;
                     const hasPrice = (p.price !== null && p.price !== undefined && p.price > 0) ||
                                      (p.net_price !== null && p.net_price !== undefined && p.net_price > 0) ||
@@ -755,7 +728,7 @@ export function SearchPanel({
                         value={batch.progress_percent}
                         className={cn(
                           "h-1.5",
-                          batch.status === 'completed' && "[&>div]:bg-emerald-500"
+                          batch.status === 'completed' && batch.batch_type !== 'normalize' && "[&>div]:bg-emerald-500"
                         )}
                       />
                     </div>
@@ -764,19 +737,19 @@ export function SearchPanel({
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <div className="flex items-center gap-3">
                         <span>Total: <span className="font-medium text-foreground">{batch.total_items}</span></span>
-                        {batch.batch_type === 'search' && (
+                        {batch.batch_type === 'extract' && (
                           <>
                             <span>Extracted: <span className="font-medium text-foreground">{batch.extracted_count}</span></span>
                             <span>Normalized: <span className="font-medium text-foreground">{batch.normalized_count}</span></span>
                           </>
                         )}
-                        {batch.batch_type === 'normalized' && (
+                        {batch.batch_type === 'normalize' && (
                           <>
                             <span>Extracted: <span className="font-medium text-foreground">{batch.extracted_count}</span></span>
                             <span>Normalized: <span className="font-medium text-foreground">{batch.normalized_count}</span></span>
                           </>
                         )}
-                        {(batch.batch_type === 'publishing' || batch.batch_type === 'publish') && (
+                        {batch.batch_type === 'publish' && (
                           <span>Published: <span className="font-medium text-foreground">{batch.published_count}</span></span>
                         )}
                       </div>
@@ -788,7 +761,7 @@ export function SearchPanel({
                   </div>
 
                   {/* Action Buttons - visible throughout pipeline (search, normalized, publishing) */}
-                  {(batch.normalized_count > 0 || batch.batch_type === 'publishing') && (
+                  {(batch.normalized_count > 0 || batch.batch_type === 'publish') && (
                     <div className="px-4 py-2 border-t border-border bg-muted/30 flex items-center gap-2">
                       {/* Toggle button: Load Products / Show / Hide */}
                       {(() => {
@@ -829,8 +802,8 @@ export function SearchPanel({
                           </Button>
                         );
                       })()}
-                      {/* Only show Publish All button for completed search/normalized batches, not during publishing */}
-                      {hasProducts && batch.status === 'completed' && ['search', 'normalized'].includes(batch.batch_type) && (
+                      {/* Show Publish All button when extraction is done (batch_type=normalized) */}
+                      {hasProducts && batch.batch_type === 'normalize' && ['processing', 'completed'].includes(batch.status) && (
                         <Button
                           variant="default"
                           size="sm"
@@ -875,16 +848,8 @@ export function SearchPanel({
 
                       {/* Pipeline Summary Cards */}
                       {(() => {
-                        // Calculate not queued count (extracted but not in publish queue)
-                        // Strip variant suffix before comparing (e.g., "WF338109=K3" -> "WF338109")
-                        const publishedStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
-                        // Only show skipped count for publishing batches that have publish_part_numbers populated
-                        const notQueuedCount = batch.batch_type === 'publishing' &&
-                          batch.part_numbers &&
-                          batch.publish_part_numbers &&
-                          batch.publish_part_numbers.length > 0
-                          ? batch.part_numbers.filter(pn => !publishedStripped.includes(stripVariantSuffix(pn))).length
-                          : 0;
+                        // Use server-stored skipped count (persisted at publish-start time)
+                        const notQueuedCount = batch.skipped_count ?? 0;
                         return (
                           <div className="grid grid-cols-5 gap-3">
                             {/* Extracted/Searched */}
@@ -897,7 +862,7 @@ export function SearchPanel({
                                 {batch.extracted_count}
                               </div>
                               <div className="text-xs text-muted-foreground">
-                                of {batch.total_items} requested
+                                of {batch.part_numbers?.length ?? batch.total_items} requested
                               </div>
                             </div>
 
@@ -952,14 +917,14 @@ export function SearchPanel({
                               <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
                                 {notQueuedCount}
                               </div>
-                              <div className="text-xs text-muted-foreground">no inventory/price</div>
+                              <div className="text-xs text-muted-foreground">blocked</div>
                             </div>
                           </div>
                         );
                       })()}
 
                       {/* Extracted Part Numbers Section - Hidden during active publishing */}
-                      {!(batch.batch_type === 'publishing' && batch.status === 'processing') &&
+                      {!(batch.batch_type === 'publish' && batch.status === 'processing') &&
                         batch.part_numbers && batch.part_numbers.length > 0 && (() => {
                         // Use batchProducts for real-time status updates (same approach as publishing section)
                         const loadedProducts = batchProducts[batch.id] || [];
@@ -1029,6 +994,10 @@ export function SearchPanel({
                                   colorClass = "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
                                   title = 'Extracted, normalizing...';
                                   break;
+                                case 'blocked':
+                                  colorClass = "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400";
+                                  title = 'Blocked — no inventory/price/locations';
+                                  break;
                                 case 'failed':
                                   colorClass = "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
                                   title = 'Failed';
@@ -1079,23 +1048,23 @@ export function SearchPanel({
                           <div className="flex items-center gap-2 mb-2">
                             <Upload className={cn(
                               "h-3.5 w-3.5",
-                              batch.batch_type === 'publishing' && batch.status === 'processing'
+                              batch.batch_type === 'publish' && batch.status === 'processing'
                                 ? "text-blue-500"
                                 : "text-emerald-500"
                             )} />
                             <span className="font-medium text-foreground">
-                              {batch.batch_type === 'publishing' && batch.status === 'processing'
+                              {batch.batch_type === 'publish' && batch.status === 'processing'
                                 ? 'Publishing to Shopify'
                                 : 'Published to Shopify'
                               } ({publishedCount} of {batch.publish_part_numbers.length})
-                              {batch.batch_type === 'publishing' && batch.status === 'processing' && (
+                              {batch.batch_type === 'publish' && batch.status === 'processing' && (
                                 <Loader2 className="h-3 w-3 ml-1.5 inline animate-spin" />
                               )}
                             </span>
                           </div>
                           <div className={cn(
                             "flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border",
-                            batch.batch_type === 'publishing' && batch.status === 'processing'
+                            batch.batch_type === 'publish' && batch.status === 'processing'
                               ? "border-blue-200 dark:border-blue-800"
                               : "border-emerald-200 dark:border-emerald-800"
                           )}>
@@ -1105,7 +1074,7 @@ export function SearchPanel({
                               const productStatus = getProductStatus(pn);
                               const isPublishedRealtime = productStatus === 'published';
                               const isPublishing = !isPublishedRealtime && !isFailed &&
-                                batch.batch_type === 'publishing' && batch.status === 'processing';
+                                batch.batch_type === 'publish' && batch.status === 'processing';
                               return (
                                 <span
                                   key={idx}
@@ -1130,37 +1099,29 @@ export function SearchPanel({
                         );
                       })()}
 
-                      {/* Not Published Section - Part numbers that were extracted but not queued for publishing */}
-                      {batch.part_numbers && batch.publish_part_numbers && batch.batch_type === 'publishing' && (() => {
-                        // Strip variant suffix for comparison (e.g., "WF338109=K3" -> "WF338109")
-                        const publishStripped = batch.publish_part_numbers?.map(stripVariantSuffix) || [];
-                        const notPublished = batch.part_numbers.filter(pn =>
-                          !publishStripped.includes(stripVariantSuffix(pn))
-                        );
-                        if (notPublished.length === 0) return null;
-                        return (
-                          <div className="text-xs">
-                            <div className="flex items-center gap-2 mb-2">
-                              <XCircle className="h-3.5 w-3.5 text-amber-500" />
-                              <span className="font-medium text-foreground">
-                                Not Queued for Publishing ({notPublished.length})
-                              </span>
-                              <span className="text-muted-foreground">(no inventory or price)</span>
-                            </div>
-                            <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border border-amber-200 dark:border-amber-800">
-                              {notPublished.map((pn, idx) => (
-                                <span
-                                  key={idx}
-                                  className="font-mono px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                                  title="Not queued - missing inventory or price"
-                                >
-                                  {pn}
-                                </span>
-                              ))}
-                            </div>
+                      {/* Skipped Part Numbers — extracted but not queued for publishing */}
+                      {batch.skipped_part_numbers && batch.skipped_part_numbers.length > 0 && (
+                        <div className="text-xs">
+                          <div className="flex items-center gap-2 mb-2">
+                            <XCircle className="h-3.5 w-3.5 text-orange-500" />
+                            <span className="font-medium text-foreground">
+                              Skipped ({batch.skipped_part_numbers.length})
+                            </span>
+                            <span className="text-muted-foreground">not queued for publishing</span>
                           </div>
-                        );
-                      })()}
+                          <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-2 bg-background rounded border border-orange-200 dark:border-orange-800">
+                            {batch.skipped_part_numbers.map((pn, idx) => (
+                              <span
+                                key={idx}
+                                className="font-mono px-2 py-0.5 rounded text-xs bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+                                title="Skipped — no inventory or price"
+                              >
+                                {pn}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Error Message */}
                       {batch.error_message && (

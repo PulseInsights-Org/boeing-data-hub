@@ -235,7 +235,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (token) {
         try {
           console.log('Calling backend GlobalSignOut API...');
-          const response = await fetch(`${API_ROOT_URL}/api/auth/logout`, {
+          const response = await fetch(`${API_ROOT_URL}/api/v1/auth/logout`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${token}`,

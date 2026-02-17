@@ -28,7 +28,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 export const startBulkSearch = async (
   request: BulkSearchRequest
 ): Promise<BulkOperationResponse> => {
-  const url = new URL('/api/bulk-search', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/extraction/bulk-search', API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'POST',
@@ -59,7 +59,7 @@ export const startBulkSearch = async (
 export const startBulkPublish = async (
   request: BulkPublishRequest
 ): Promise<BulkOperationResponse> => {
-  const url = new URL('/api/bulk-publish', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/publishing/bulk-publish', API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'POST',
@@ -87,7 +87,7 @@ export const startBulkPublish = async (
  * Get the status of a specific batch.
  */
 export const getBatchStatus = async (batchId: string): Promise<BatchStatusResponse> => {
-  const url = new URL(`/api/batches/${batchId}`, API_BASE_URL || window.location.origin);
+  const url = new URL(`/api/v1/batches/${batchId}`, API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'GET',
@@ -117,7 +117,7 @@ export const listBatches = async (
   offset: number = 0,
   status?: string
 ): Promise<BatchListResponse> => {
-  const url = new URL('/api/batches', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/batches', API_BASE_URL || window.location.origin);
   url.searchParams.set('limit', limit.toString());
   url.searchParams.set('offset', offset.toString());
   if (status) {
@@ -149,7 +149,7 @@ export const listBatches = async (
  * Cancel a batch operation.
  */
 export const cancelBatch = async (batchId: string): Promise<{ message: string; batch_id: string }> => {
-  const url = new URL(`/api/batches/${batchId}`, API_BASE_URL || window.location.origin);
+  const url = new URL(`/api/v1/batches/${batchId}`, API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'DELETE',
@@ -255,7 +255,7 @@ export const getStagingProducts = async (
   status?: string,
   batchId?: string
 ): Promise<StagingProductsResponse> => {
-  const url = new URL('/api/products/staging', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/products/staging', API_BASE_URL || window.location.origin);
   url.searchParams.set('limit', limit.toString());
   url.searchParams.set('offset', offset.toString());
   if (status) {
@@ -300,7 +300,7 @@ export interface RawBoeingDataResponse {
  * This queries the boeing_raw_data table for historical API responses.
  */
 export const getRawBoeingData = async (partNumber: string): Promise<RawBoeingDataResponse> => {
-  const url = new URL(`/api/products/raw-data/${encodeURIComponent(partNumber)}`, API_BASE_URL || window.location.origin);
+  const url = new URL(`/api/v1/products/raw-data/${encodeURIComponent(partNumber)}`, API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'GET',

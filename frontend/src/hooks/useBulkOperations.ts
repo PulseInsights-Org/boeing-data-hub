@@ -201,15 +201,17 @@ export function useBulkOperations(): UseBulkOperationsReturn {
     refreshBatches();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll for updates when there are active batches (fallback for realtime)
+  // Poll for updates when Celery tasks are actively running
+  // Exclude "normalized" batches — they are idle, waiting for user to publish
   useEffect(() => {
-    const hasActiveBatches = activeBatches.some(
-      b => b.status === 'pending' || b.status === 'processing'
+    const hasRunningTasks = activeBatches.some(
+      b => (b.status === 'pending' || b.status === 'processing')
+        && b.batch_type !== 'normalize'
     );
 
-    if (!hasActiveBatches) return;
+    if (!hasRunningTasks) return;
 
-    // Poll every 3 seconds when there are active batches
+    // Poll every 3 seconds while extraction or publishing tasks are running
     const pollInterval = setInterval(() => {
       console.log('[useBulkOperations] Polling for batch updates...');
       refreshBatches();

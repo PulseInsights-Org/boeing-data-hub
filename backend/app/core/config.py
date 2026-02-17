@@ -1,3 +1,4 @@
+"""Application settings — environment variable loading via pydantic."""
 import json
 import os
 from typing import Optional
@@ -6,12 +7,10 @@ from functools import lru_cache
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-
 load_dotenv()
 
-
 class Settings(BaseModel):
-    # AWS Cognito settings (for SSO authentication from Aviation Gateway)
+    # Cognito
     cognito_region: str = os.getenv("COGNITO_REGION", "us-east-1")
     cognito_user_pool_id: Optional[str] = os.getenv("COGNITO_USER_POOL_ID")
     cognito_app_client_id: Optional[str] = os.getenv("COGNITO_APP_CLIENT_ID")
@@ -37,9 +36,8 @@ class Settings(BaseModel):
     shopify_admin_api_token: str | None = os.getenv("SHOPIFY_ADMIN_API_TOKEN")
     shopify_api_version: str = os.getenv("SHOPIFY_API_VERSION", "2024-10")
     shopify_location_map: dict[str, str] = json.loads(os.getenv("SHOPIFY_LOCATION_MAP", "{}"))
-    # Map Boeing location names to 3-char inventory location codes for Shopify metafield
-    # Example: {"Dallas Central": "1D1", "Chicago Warehouse": "CHI"}
     shopify_inventory_location_codes: dict[str, str] = json.loads(os.getenv("SHOPIFY_INVENTORY_LOCATION_CODES", "{}"))
+    shopify_default_location_name: str | None = os.getenv("SHOPIFY_DEFAULT_LOCATION_NAME")
 
     # Boeing
     boeing_oauth_token_url: str = os.getenv(
@@ -63,16 +61,7 @@ class Settings(BaseModel):
     # Redis
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-    # Celery
-    celery_broker_url: str = os.getenv("CELERY_BROKER_URL", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-    celery_result_backend: str = os.getenv("CELERY_RESULT_BACKEND", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-
-    # Worker concurrency
-    celery_extraction_concurrency: int = int(os.getenv("CELERY_EXTRACTION_CONCURRENCY", "2"))
-    celery_normalization_concurrency: int = int(os.getenv("CELERY_NORMALIZATION_CONCURRENCY", "4"))
-    celery_shopify_concurrency: int = int(os.getenv("CELERY_SHOPIFY_CONCURRENCY", "1"))
-
-    # Batch processing settings
+    # Batch processing
     boeing_batch_size: int = int(os.getenv("BOEING_BATCH_SIZE", "10"))
     max_bulk_search_size: int = int(os.getenv("MAX_BULK_SEARCH_SIZE", "50000"))
     max_bulk_publish_size: int = int(os.getenv("MAX_BULK_PUBLISH_SIZE", "10000"))
@@ -80,14 +69,39 @@ class Settings(BaseModel):
     # Rate limits
     boeing_api_rate_limit: str = os.getenv("BOEING_API_RATE_LIMIT", "20/m")
     shopify_api_rate_limit: str = os.getenv("SHOPIFY_API_RATE_LIMIT", "30/m")
+    boeing_rate_limit_capacity: int = int(os.getenv("BOEING_RATE_LIMIT_CAPACITY", "2"))
+    boeing_rate_limit_refill: int = int(os.getenv("BOEING_RATE_LIMIT_REFILL", "2"))
 
-    # Sync scheduler settings
-    # - production: Uses hour buckets (0-23)
-    # - testing: Uses minute buckets (0-5 for 10-min intervals)
+    # Celery auto-start
+    auto_start_celery: bool = os.getenv("AUTO_START_CELERY", "true").lower() == "true"
+
+    # Sync scheduler
     sync_mode: str = os.getenv("SYNC_MODE", "testing")
     sync_test_bucket_count: int = int(os.getenv("SYNC_TEST_BUCKET_COUNT", "6"))
     sync_batch_size: int = int(os.getenv("SYNC_BATCH_SIZE", "10"))
     sync_max_failures: int = int(os.getenv("SYNC_MAX_FAILURES", "5"))
+
+    # Sync timing
+    sync_dispatch_minute: str = os.getenv(
+        "SYNC_DISPATCH_MINUTE",
+        "*/10" if os.getenv("SYNC_MODE", "testing") == "testing" else "45",
+    )
+    sync_retry_hours: int = int(os.getenv("SYNC_RETRY_HOURS", "4"))
+    sync_cleanup_hour: int = int(os.getenv("SYNC_CLEANUP_HOUR", "0"))
+
+    # Sync control
+    sync_enabled: bool = os.getenv("SYNC_ENABLED", "true").lower() == "true"
+    sync_frequency: str = os.getenv("SYNC_FREQUENCY", "daily").lower()
+    sync_weekly_day: str = os.getenv("SYNC_WEEKLY_DAY", "Sunday")
+
+    # Gemini (LLM report generation)
+    gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
+    # Resend (email delivery)
+    resend_api_key: str | None = os.getenv("RESEND_API_KEY")
+    resend_from_address: str = os.getenv("RESEND_FROM_ADDRESS", "reports@skynetparts.com")
+    report_recipients: list[str] = json.loads(os.getenv("REPORT_RECIPIENTS", "[]"))
 
     @property
     def sync_max_buckets(self) -> int:

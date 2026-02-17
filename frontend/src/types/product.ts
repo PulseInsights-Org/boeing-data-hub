@@ -1,4 +1,4 @@
-export type ProductStatus = 'fetched' | 'enriched' | 'normalized' | 'published';
+export type ProductStatus = 'fetched' | 'enriched' | 'normalized' | 'published' | 'blocked' | 'failed';
 
 export interface LocationAvailability {
   location: string | null;
@@ -89,11 +89,12 @@ export interface ShopifyPublishResponse {
 // ============================================
 
 export type BatchStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
-export type BatchType = 'search' | 'normalized' | 'publishing' | 'publish';
+export type BatchType = 'extract' | 'normalize' | 'publish';
 
 export interface FailedItem {
   part_number: string;
   error: string;
+  stage?: string;
   timestamp?: string;
 }
 
@@ -108,6 +109,8 @@ export interface BatchStatusResponse {
   failed_count: number;
   progress_percent: number;
   failed_items?: FailedItem[];
+  skipped_count: number;
+  skipped_part_numbers?: string[];
   part_numbers?: string[];  // Original part numbers from search/extraction
   publish_part_numbers?: string[];  // Part numbers selected for publishing (subset of part_numbers)
   error_message?: string;

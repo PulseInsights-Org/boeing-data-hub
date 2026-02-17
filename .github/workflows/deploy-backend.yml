@@ -32,9 +32,9 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy to EC2
+      - name: Deploy backend code to EC2
         run: |
-          # Sync backend code to EC2 (excluding unnecessary files)
+          # Sync ONLY backend/ to EC2 (frontend is deployed on Amplify)
           rsync -avz --delete \
             --exclude '__pycache__' \
             --exclude '*.pyc' \
@@ -43,6 +43,8 @@ jobs:
             --exclude '.git' \
             --exclude 'celerybeat-schedule*' \
             --exclude 'tests' \
+            --exclude 'logs.txt' \
+            --exclude 'nul' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             ./backend/ \
             ${{ env.EC2_USER }}@${{ env.EC2_HOST }}:${{ env.DEPLOY_PATH }}/
@@ -52,58 +54,50 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
             cd /home/ubuntu/boeing-data-hub/backend
 
-            # Activate virtual environment and install dependencies
+            # Install dependencies
             source venv/bin/activate
             pip install -r requirements.txt --quiet
 
-            # Restart all three services
-            sudo systemctl restart boeing-backend
-            sudo systemctl restart boeing-celery
-            sudo systemctl restart boeing-celery-beat
+            # Restart all services via redeploy script
+            sudo bash scripts/redeploy.sh
 
             # Wait for services to stabilize
-            sleep 5
+            sleep 3
 
-            # Verify services are running
-            if systemctl is-active --quiet boeing-backend; then
-              echo "✅ Backend service is running"
-            else
-              echo "❌ Backend service failed to start"
-              sudo journalctl -u boeing-backend -n 20 --no-pager
+            # Verify all 6 services are running
+            SERVICES=(boeing-backend boeing-celery-extract boeing-celery-publish boeing-celery-sync boeing-celery-default boeing-celery-beat)
+            ALL_OK=true
+
+            for svc in "${SERVICES[@]}"; do
+              if systemctl is-active --quiet "$svc"; then
+                echo "  $svc is running"
+              else
+                echo "  $svc FAILED"
+                sudo journalctl -u "$svc" -n 15 --no-pager
+                ALL_OK=false
+              fi
+            done
+
+            if [ "$ALL_OK" = false ]; then
+              echo "One or more services failed to start"
               exit 1
             fi
 
-            if systemctl is-active --quiet boeing-celery; then
-              echo "✅ Celery worker service is running"
-            else
-              echo "❌ Celery worker service failed to start"
-              sudo journalctl -u boeing-celery -n 20 --no-pager
-              exit 1
-            fi
-
-            if systemctl is-active --quiet boeing-celery-beat; then
-              echo "✅ Celery beat service is running"
-            else
-              echo "❌ Celery beat service failed to start"
-              sudo journalctl -u boeing-celery-beat -n 20 --no-pager
-              exit 1
-            fi
-
-            # Health check with retry (uvicorn may take a few seconds to fully start)
+            # Health check with retry
             echo "Waiting for health check..."
             for i in 1 2 3 4 5; do
               if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-                echo "✅ Health check passed"
+                echo "Health check passed"
                 break
               fi
               if [ $i -eq 5 ]; then
-                echo "❌ Health check failed after 5 attempts"
+                echo "Health check failed after 5 attempts"
                 exit 1
               fi
               echo "Attempt $i failed, retrying in 3s..."
               sleep 3
             done
-            echo "🚀 Deployment successful!"
+            echo "Deployment successful!"
           EOF
 
       - name: Cleanup

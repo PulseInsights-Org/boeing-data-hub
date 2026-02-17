@@ -1,0 +1,514 @@
+[
+  {
+    "schema": "auth",
+    "function_name": "email",
+    "arguments": "",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "auth",
+    "function_name": "jwt",
+    "arguments": "",
+    "return_type": "jsonb",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "auth",
+    "function_name": "role",
+    "arguments": "",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "auth",
+    "function_name": "uid",
+    "arguments": "",
+    "return_type": "uuid",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "graphql",
+    "function_name": "_internal_resolve",
+    "arguments": "query text, variables jsonb DEFAULT '{}'::jsonb, \"operationName\" text DEFAULT NULL::text, extensions jsonb DEFAULT NULL::jsonb",
+    "return_type": "jsonb",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "graphql",
+    "function_name": "comment_directive",
+    "arguments": "comment_ text",
+    "return_type": "jsonb",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "graphql",
+    "function_name": "exception",
+    "arguments": "message text",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "graphql",
+    "function_name": "get_schema_version",
+    "arguments": "",
+    "return_type": "integer",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "graphql",
+    "function_name": "increment_schema_version",
+    "arguments": "",
+    "return_type": "event_trigger",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "graphql",
+    "function_name": "resolve",
+    "arguments": "query text, variables jsonb DEFAULT '{}'::jsonb, \"operationName\" text DEFAULT NULL::text, extensions jsonb DEFAULT NULL::jsonb",
+    "return_type": "jsonb",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "graphql_public",
+    "function_name": "graphql",
+    "arguments": "\"operationName\" text DEFAULT NULL::text, query text DEFAULT NULL::text, variables jsonb DEFAULT NULL::jsonb, extensions jsonb DEFAULT NULL::jsonb",
+    "return_type": "jsonb",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "check_batch_completion",
+    "arguments": "p_batch_id character varying",
+    "return_type": "TABLE(is_complete boolean, new_status character varying, published_count integer, failed_count integer, total_items integer)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "get_batch_part_numbers_with_status",
+    "arguments": "p_batch_id character varying",
+    "return_type": "TABLE(part_number text, status text, has_inventory boolean, has_price boolean)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "get_batch_product_status_counts",
+    "arguments": "p_batch_id character varying",
+    "return_type": "TABLE(status text, count bigint)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "get_batch_stats",
+    "arguments": "p_batch_id character varying",
+    "return_type": "TABLE(batch_id character varying, batch_type character varying, status character varying, total_items integer, extracted_count bigint, normalized_count bigint, published_count bigint, failed_count bigint, skipped_count bigint, progress_percent numeric)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "increment_batch_counter",
+    "arguments": "p_batch_id text, p_column text, p_amount integer DEFAULT 1",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "increment_batch_extracted",
+    "arguments": "p_batch_id character varying, p_count integer DEFAULT 1",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "increment_batch_normalized",
+    "arguments": "p_batch_id character varying, p_count integer DEFAULT 1",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "increment_batch_published",
+    "arguments": "p_batch_id character varying, p_count integer DEFAULT 1",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "recalculate_batch_stats",
+    "arguments": "p_batch_id character varying",
+    "return_type": "TABLE(batch_id character varying, total_items integer, extracted_count integer, normalized_count integer, published_count integer, failed_count integer, status character varying)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "record_batch_failure",
+    "arguments": "p_batch_id text, p_part_number text, p_error text",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "record_batch_failure",
+    "arguments": "p_batch_id character varying, p_part_number text, p_error text",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "public",
+    "function_name": "set_product_staging_updated_at",
+    "arguments": "",
+    "return_type": "trigger",
+    "kind": "function",
+    "usage_hint": "trigger function"
+  },
+  {
+    "schema": "public",
+    "function_name": "set_product_updated_at",
+    "arguments": "",
+    "return_type": "trigger",
+    "kind": "function",
+    "usage_hint": "trigger function"
+  },
+  {
+    "schema": "public",
+    "function_name": "set_updated_at",
+    "arguments": "",
+    "return_type": "trigger",
+    "kind": "function",
+    "usage_hint": "trigger function"
+  },
+  {
+    "schema": "public",
+    "function_name": "update_batch_stats_on_product_change",
+    "arguments": "",
+    "return_type": "trigger",
+    "kind": "function",
+    "usage_hint": "trigger function"
+  },
+  {
+    "schema": "public",
+    "function_name": "update_batch_status",
+    "arguments": "p_batch_id text, p_status text, p_error text DEFAULT NULL::text",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "apply_rls",
+    "arguments": "wal jsonb, max_record_bytes integer DEFAULT (1024 * 1024)",
+    "return_type": "SETOF realtime.wal_rls",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "broadcast_changes",
+    "arguments": "topic_name text, event_name text, operation text, table_name text, table_schema text, new record, old record, level text DEFAULT 'ROW'::text",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "build_prepared_statement_sql",
+    "arguments": "prepared_statement_name text, entity regclass, columns realtime.wal_column[]",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "cast",
+    "arguments": "val text, type_ regtype",
+    "return_type": "jsonb",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "check_equality_op",
+    "arguments": "op realtime.equality_op, type_ regtype, val_1 text, val_2 text",
+    "return_type": "boolean",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "is_visible_through_filters",
+    "arguments": "columns realtime.wal_column[], filters realtime.user_defined_filter[]",
+    "return_type": "boolean",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "list_changes",
+    "arguments": "publication name, slot_name name, max_changes integer, max_record_bytes integer",
+    "return_type": "SETOF realtime.wal_rls",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "quote_wal2json",
+    "arguments": "entity regclass",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "send",
+    "arguments": "payload jsonb, event text, topic text, private boolean DEFAULT true",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "subscription_check_filters",
+    "arguments": "",
+    "return_type": "trigger",
+    "kind": "function",
+    "usage_hint": "trigger function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "to_regrole",
+    "arguments": "role_name text",
+    "return_type": "regrole",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "realtime",
+    "function_name": "topic",
+    "arguments": "",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "can_insert_object",
+    "arguments": "bucketid text, name text, owner uuid, metadata jsonb",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "delete_leaf_prefixes",
+    "arguments": "bucket_ids text[], names text[]",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "enforce_bucket_name_length",
+    "arguments": "",
+    "return_type": "trigger",
+    "kind": "function",
+    "usage_hint": "trigger function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "extension",
+    "arguments": "name text",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "filename",
+    "arguments": "name text",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "foldername",
+    "arguments": "name text",
+    "return_type": "text[]",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "get_common_prefix",
+    "arguments": "p_key text, p_prefix text, p_delimiter text",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "get_level",
+    "arguments": "name text",
+    "return_type": "integer",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "get_prefix",
+    "arguments": "name text",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "get_prefixes",
+    "arguments": "name text",
+    "return_type": "text[]",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "get_size_by_bucket",
+    "arguments": "",
+    "return_type": "TABLE(size bigint, bucket_id text)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "list_multipart_uploads_with_delimiter",
+    "arguments": "bucket_id text, prefix_param text, delimiter_param text, max_keys integer DEFAULT 100, next_key_token text DEFAULT ''::text, next_upload_token text DEFAULT ''::text",
+    "return_type": "TABLE(key text, id text, created_at timestamp with time zone)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "list_objects_with_delimiter",
+    "arguments": "_bucket_id text, prefix_param text, delimiter_param text, max_keys integer DEFAULT 100, start_after text DEFAULT ''::text, next_token text DEFAULT ''::text, sort_order text DEFAULT 'asc'::text",
+    "return_type": "TABLE(name text, id uuid, metadata jsonb, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "operation",
+    "arguments": "",
+    "return_type": "text",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "protect_delete",
+    "arguments": "",
+    "return_type": "trigger",
+    "kind": "function",
+    "usage_hint": "trigger function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "search",
+    "arguments": "prefix text, bucketname text, limits integer DEFAULT 100, levels integer DEFAULT 1, offsets integer DEFAULT 0, search text DEFAULT ''::text, sortcolumn text DEFAULT 'name'::text, sortorder text DEFAULT 'asc'::text",
+    "return_type": "TABLE(name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "search_by_timestamp",
+    "arguments": "p_prefix text, p_bucket_id text, p_limit integer, p_level integer, p_start_after text, p_sort_order text, p_sort_column text, p_sort_column_after text",
+    "return_type": "TABLE(key text, name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "search_legacy_v1",
+    "arguments": "prefix text, bucketname text, limits integer DEFAULT 100, levels integer DEFAULT 1, offsets integer DEFAULT 0, search text DEFAULT ''::text, sortcolumn text DEFAULT 'name'::text, sortorder text DEFAULT 'asc'::text",
+    "return_type": "TABLE(name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "search_v2",
+    "arguments": "prefix text, bucket_name text, limits integer DEFAULT 100, levels integer DEFAULT 1, start_after text DEFAULT ''::text, sort_order text DEFAULT 'asc'::text, sort_column text DEFAULT 'name'::text, sort_column_after text DEFAULT ''::text",
+    "return_type": "TABLE(key text, name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "storage",
+    "function_name": "update_updated_at_column",
+    "arguments": "",
+    "return_type": "trigger",
+    "kind": "function",
+    "usage_hint": "trigger function"
+  },
+  {
+    "schema": "vault",
+    "function_name": "_crypto_aead_det_decrypt",
+    "arguments": "message bytea, additional bytea, key_id bigint, context bytea DEFAULT '\\x7067736f6469756d'::bytea, nonce bytea DEFAULT NULL::bytea",
+    "return_type": "bytea",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "vault",
+    "function_name": "_crypto_aead_det_encrypt",
+    "arguments": "message bytea, additional bytea, key_id bigint, context bytea DEFAULT '\\x7067736f6469756d'::bytea, nonce bytea DEFAULT NULL::bytea",
+    "return_type": "bytea",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "vault",
+    "function_name": "_crypto_aead_det_noncegen",
+    "arguments": "",
+    "return_type": "bytea",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "vault",
+    "function_name": "create_secret",
+    "arguments": "new_secret text, new_name text DEFAULT NULL::text, new_description text DEFAULT ''::text, new_key_id uuid DEFAULT NULL::uuid",
+    "return_type": "uuid",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  },
+  {
+    "schema": "vault",
+    "function_name": "update_secret",
+    "arguments": "secret_id uuid, new_secret text DEFAULT NULL::text, new_name text DEFAULT NULL::text, new_description text DEFAULT NULL::text, new_key_id uuid DEFAULT NULL::uuid",
+    "return_type": "void",
+    "kind": "function",
+    "usage_hint": "rpc / regular function"
+  }
+]

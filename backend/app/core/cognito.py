@@ -1,8 +1,11 @@
 """
+AWS Cognito integration — user management and token validation.
+
 AWS Cognito JWT Validation Module for Boeing Data Hub
 
 Handles fetching JWKS and validating Cognito access tokens.
 Tokens are passed from Aviation Gateway via SSO flow.
+Version: 1.0.0
 """
 import time
 import logging

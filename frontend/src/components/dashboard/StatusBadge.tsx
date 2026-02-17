@@ -23,6 +23,14 @@ const statusConfig: Record<ProductStatus, { label: string; className: string }> 
     label: 'Published',
     className: 'bg-success/10 text-success border-success/30',
   },
+  blocked: {
+    label: 'Blocked',
+    className: 'bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-700',
+  },
+  failed: {
+    label: 'Failed',
+    className: 'bg-destructive/10 text-destructive border-destructive/30',
+  },
 };
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {
@@ -42,7 +50,9 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
           status === 'fetched' && 'bg-muted-foreground',
           status === 'enriched' && 'bg-warning',
           status === 'normalized' && 'bg-amber-500',
-          status === 'published' && 'bg-success'
+          status === 'published' && 'bg-success',
+          status === 'blocked' && 'bg-orange-500',
+          status === 'failed' && 'bg-destructive'
         )}
       />
       {config.label}

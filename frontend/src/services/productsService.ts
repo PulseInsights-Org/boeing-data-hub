@@ -48,7 +48,7 @@ export async function fetchPublishedProducts(
   offset: number = 0,
   search?: string
 ): Promise<PublishedProductsResponse> {
-  const url = new URL('/api/products/published', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/products/published', API_BASE_URL || window.location.origin);
 
   url.searchParams.set('limit', limit.toString());
   url.searchParams.set('offset', offset.toString());
@@ -77,7 +77,7 @@ export async function fetchPublishedProducts(
  * Fetch a single published product by ID.
  */
 export async function fetchPublishedProduct(productId: string): Promise<PublishedProduct> {
-  const url = new URL(`/api/products/published/${productId}`, API_BASE_URL || window.location.origin);
+  const url = new URL(`/api/v1/products/published/${productId}`, API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'GET',

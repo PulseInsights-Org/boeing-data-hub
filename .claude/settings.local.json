@@ -12,7 +12,14 @@
       "Bash(del:*)",
       "Bash(python -c:*)",
       "Bash(python -m pytest tests/test_sync_helpers.py -v --tb=short)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(git rm:*)",
+      "Bash(pip install:*)",
+      "Bash(move \"app\\\\services\\\\utils\\\\shopify_inventory.py\" \"app\\\\utils\\\\shopify_inventory.py\")",
+      "Bash(move \"app\\\\services\\\\utils\\\\shopify_orchestrator.py\" \"app\\\\utils\\\\shopify_orchestrator.py\")",
+      "Bash(move:*)",
+      "Bash(ssh:*)"
     ]
   }
 }

@@ -311,7 +311,7 @@ export function BulkOperationsPanel({
                       {/* Progress Stats */}
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">
                         <span>Total: {batch.total_items}</span>
-                        {batch.batch_type === 'search' ? (
+                        {batch.batch_type === 'extract' ? (
                           <>
                             <span>Extracted: {batch.extracted_count}</span>
                             <span>Normalized: {batch.normalized_count}</span>

@@ -32,7 +32,7 @@ export const publishToShopify = async (
   }
   console.log(`[ShopifyService] Publishing product to Shopify: ${partNumber}${batchId ? ` (batch: ${batchId})` : ''}`);
 
-  const url = new URL('/api/shopify/publish', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/publishing/publish', API_BASE_URL || window.location.origin);
 
   const payload: { part_number: string; batch_id?: string } = { part_number: partNumber };
   if (batchId) {
@@ -77,7 +77,7 @@ export const updateShopifyProduct = async (
 ): Promise<ShopifyPublishResponse> => {
   console.log(`[ShopifyService] Updating Shopify product: ${shopifyProductId}`);
 
-  const url = new URL(`/api/shopify/products/${encodeURIComponent(shopifyProductId)}`, API_BASE_URL || window.location.origin);
+  const url = new URL(`/api/v1/publishing/products/${encodeURIComponent(shopifyProductId)}`, API_BASE_URL || window.location.origin);
 
   const response = await fetch(url.toString(), {
     method: 'PUT',
@@ -108,7 +108,7 @@ export const updateShopifyProduct = async (
 export const checkProductExists = async (sku: string): Promise<string | null> => {
   console.log(`[ShopifyService] Checking if SKU exists: ${sku}`);
 
-  const url = new URL('/api/shopify/check', API_BASE_URL || window.location.origin);
+  const url = new URL('/api/v1/publishing/check', API_BASE_URL || window.location.origin);
   url.searchParams.set('sku', sku);
 
   const response = await fetch(url.toString(), {

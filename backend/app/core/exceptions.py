@@ -1,4 +1,6 @@
 """
+Custom exceptions — RetryableError, NonRetryableError for task control flow.
+
 Custom exception hierarchy for Boeing Data Hub.
 
 Exceptions are categorized as:
@@ -8,6 +10,7 @@ Exceptions are categorized as:
 This categorization allows Celery tasks to use:
 - autoretry_for=(RetryableError,)
 - dont_autoretry_for=(NonRetryableError,)
+Version: 1.0.0
 """
 
 

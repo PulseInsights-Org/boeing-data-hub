@@ -1,3 +1,7 @@
+"""
+Boeing HTTP client — OAuth authentication and REST API calls.
+Version: 1.0.0
+"""
 from typing import Any, Dict
 
 import httpx

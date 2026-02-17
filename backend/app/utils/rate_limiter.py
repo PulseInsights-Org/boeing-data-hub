@@ -1,4 +1,6 @@
 """
+Rate limiter — Redis-based token bucket for Boeing API throttling.
+
 Boeing API Rate Limiter using Token Bucket Algorithm.
 
 Provides a global, Redis-based rate limiter that ensures Boeing API
@@ -15,6 +17,7 @@ Usage:
     limiter = get_boeing_rate_limiter()
     limiter.wait_for_token()  # Blocks until token available
     # Now safe to call Boeing API
+Version: 1.0.0
 """
 
 import logging
@@ -264,18 +267,14 @@ def get_boeing_rate_limiter() -> BoeingRateLimiter:
     global _rate_limiter
 
     if _rate_limiter is None:
-        import os
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        redis_client = redis.from_url(redis_url)
+        from app.core.config import settings
 
-        # Get config from environment or use defaults
-        capacity = int(os.getenv("BOEING_RATE_LIMIT_CAPACITY", DEFAULT_CAPACITY))
-        refill_rate = int(os.getenv("BOEING_RATE_LIMIT_REFILL", DEFAULT_REFILL_RATE))
+        redis_client = redis.from_url(settings.redis_url)
 
         _rate_limiter = BoeingRateLimiter(
             redis_client=redis_client,
-            capacity=capacity,
-            refill_rate=refill_rate,
+            capacity=settings.boeing_rate_limit_capacity,
+            refill_rate=settings.boeing_rate_limit_refill,
         )
 
     return _rate_limiter

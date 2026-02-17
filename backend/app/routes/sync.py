@@ -1,184 +1,53 @@
 """
-Sync Dashboard API endpoints.
+Sync routes — sync dashboard, schedule management, manual triggers.
 
-Provides endpoints for the Auto-Sync dashboard:
-- Dashboard overview stats
-- Hourly distribution
-- Sync history
-- Failed products
-- Product sync status lookup
+Sync pipeline routes – Auto-Sync dashboard, history, failures, triggers.
+Version: 1.0.0
 """
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query, Depends
-from pydantic import BaseModel
 
+from fastapi import APIRouter, HTTPException, Query, Depends
+from supabase import create_client
+
+from app.schemas.sync import (
+    SyncStatusCounts, SlotInfo, SyncDashboardResponse,
+    SyncProduct, SyncProductsResponse,
+    SyncHistoryItem, SyncHistoryResponse,
+    FailedProduct, FailedProductsResponse,
+    HourlyStats, HourlyStatsResponse,
+)
 from app.core.auth import get_current_user
 from app.core.config import settings
 from app.db.sync_store import get_sync_store
 
 logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/api/sync", tags=["sync"])
-
-
-# ============================================================
-# Response Models
-# ============================================================
-
-class SyncStatusCounts(BaseModel):
-    pending: int = 0
-    syncing: int = 0
-    success: int = 0
-    failed: int = 0
+router = APIRouter(prefix="/sync", tags=["sync"])
 
 
-class SlotInfo(BaseModel):
-    hour: int
-    count: int
-    status: str  # 'active', 'filling', 'dormant'
+def _get_client():
+    return create_client(settings.supabase_url, settings.supabase_key)
 
-
-class SyncDashboardResponse(BaseModel):
-    """Complete dashboard data response."""
-    # Overview stats
-    total_products: int
-    active_products: int
-    inactive_products: int
-    success_rate_percent: float
-    high_failure_count: int
-
-    # Status breakdown
-    status_counts: SyncStatusCounts
-
-    # Current sync info
-    current_hour: int
-    current_hour_products: int
-    sync_mode: str  # 'production' or 'testing'
-    max_buckets: int
-
-    # Slot distribution
-    slot_distribution: List[SlotInfo]
-    active_slots: int
-    filling_slots: int
-    dormant_slots: int
-    efficiency_percent: float
-
-    # Timestamps
-    last_updated: str
-
-
-class SyncProduct(BaseModel):
-    """Individual product sync info."""
-    id: str
-    sku: str
-    user_id: str
-    hour_bucket: int
-    sync_status: str
-    last_sync_at: Optional[str]
-    consecutive_failures: int
-    last_error: Optional[str]
-    last_price: Optional[float]
-    last_quantity: Optional[int]
-    last_inventory_status: Optional[str]
-    last_location_summary: Optional[str]
-    is_active: bool
-    created_at: str
-    updated_at: str
-
-
-class SyncProductsResponse(BaseModel):
-    """Paginated sync products response."""
-    products: List[SyncProduct]
-    total: int
-    limit: int
-    offset: int
-
-
-class SyncHistoryItem(BaseModel):
-    """Single sync history entry."""
-    sku: str
-    sync_status: str
-    last_sync_at: Optional[str]
-    last_price: Optional[float]
-    last_quantity: Optional[int]
-    last_inventory_status: Optional[str]
-    last_error: Optional[str]
-    hour_bucket: int
-
-
-class SyncHistoryResponse(BaseModel):
-    """Recent sync history response."""
-    items: List[SyncHistoryItem]
-    total: int
-
-
-class FailedProduct(BaseModel):
-    """Failed product with error details."""
-    sku: str
-    consecutive_failures: int
-    last_error: Optional[str]
-    last_sync_at: Optional[str]
-    hour_bucket: int
-    is_active: bool
-
-
-class FailedProductsResponse(BaseModel):
-    """Failed products list response."""
-    products: List[FailedProduct]
-    total: int
-
-
-class HourlyStats(BaseModel):
-    """Stats for a specific hour."""
-    hour: int
-    total: int
-    pending: int
-    syncing: int
-    success: int
-    failed: int
-
-
-class HourlyStatsResponse(BaseModel):
-    """24-hour stats breakdown."""
-    hours: List[HourlyStats]
-    current_hour: int
-
-
-# ============================================================
-# API Endpoints
-# ============================================================
 
 @router.get("/dashboard", response_model=SyncDashboardResponse)
-async def get_sync_dashboard(
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get complete sync dashboard data.
-
-    Returns overview stats, slot distribution, and current sync info.
-    """
+async def get_sync_dashboard(current_user: dict = Depends(get_current_user)):
+    """Get complete sync dashboard data."""
     sync_store = get_sync_store()
 
     try:
-        # Get status summary
         status_summary = sync_store.get_sync_status_summary()
-
-        # Get slot distribution
         slot_distribution = sync_store.get_slot_distribution_summary()
         slot_counts = slot_distribution.get("slot_counts", {})
 
-        # Current hour info
         now = datetime.now(timezone.utc)
         if settings.sync_mode == "testing":
-            current_hour = now.minute // 10  # Minute bucket for testing
+            current_hour = now.minute // 10
         else:
             current_hour = now.hour
 
         current_hour_products = slot_counts.get(current_hour, 0)
 
-        # Build slot info list
         max_buckets = settings.sync_max_buckets
         slot_info_list = []
 
@@ -200,7 +69,6 @@ async def get_sync_dashboard(
                 status=status
             ))
 
-        # Build response
         status_counts_data = status_summary.get("status_counts", {})
 
         return SyncDashboardResponse(
@@ -242,13 +110,9 @@ async def get_sync_products(
     search: Optional[str] = Query(None, description="Search by SKU"),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Get products in sync schedule with filtering and pagination.
-    """
-    from supabase import create_client
-
+    """Get products in sync schedule with filtering and pagination."""
     user_id = current_user["user_id"]
-    client = create_client(settings.supabase_url, settings.supabase_key)
+    client = _get_client()
 
     try:
         query = client.table("product_sync_schedule").select("*", count="exact")
@@ -308,13 +172,9 @@ async def get_sync_history(
     hours_back: int = Query(24, ge=1, le=168, description="Hours to look back"),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Get recent sync history (products synced in the last N hours).
-    """
-    from supabase import create_client
-
+    """Get recent sync history (products synced in the last N hours)."""
     user_id = current_user["user_id"]
-    client = create_client(settings.supabase_url, settings.supabase_key)
+    client = _get_client()
 
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back)
@@ -356,13 +216,9 @@ async def get_failed_products(
     include_inactive: bool = Query(False, description="Include deactivated products"),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Get products with sync failures.
-    """
-    from supabase import create_client
-
+    """Get products with sync failures."""
     user_id = current_user["user_id"]
-    client = create_client(settings.supabase_url, settings.supabase_key)
+    client = _get_client()
 
     try:
         query = client.table("product_sync_schedule") \
@@ -402,27 +258,20 @@ async def get_failed_products(
 async def get_hourly_stats(
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Get detailed stats per hour bucket.
-    """
-    from supabase import create_client
-
+    """Get detailed stats per hour bucket."""
     user_id = current_user["user_id"]
-    client = create_client(settings.supabase_url, settings.supabase_key)
+    client = _get_client()
 
     try:
-        # Fetch all products for this user
         result = client.table("product_sync_schedule") \
             .select("hour_bucket, sync_status, is_active") \
             .eq("user_id", user_id) \
             .eq("is_active", True) \
             .execute()
 
-        # Initialize hourly stats
         max_buckets = settings.sync_max_buckets
         hourly_data = {h: {"total": 0, "pending": 0, "syncing": 0, "success": 0, "failed": 0} for h in range(max_buckets)}
 
-        # Aggregate stats
         for p in result.data or []:
             hour = p["hour_bucket"]
             status = p["sync_status"]
@@ -432,7 +281,6 @@ async def get_hourly_stats(
                 if status in hourly_data[hour]:
                     hourly_data[hour][status] += 1
 
-        # Build response
         hours = []
         for h in range(max_buckets):
             data = hourly_data[h]
@@ -445,7 +293,6 @@ async def get_hourly_stats(
                 failed=data["failed"],
             ))
 
-        # Current hour
         now = datetime.now(timezone.utc)
         if settings.sync_mode == "testing":
             current_hour = now.minute // 10
@@ -467,13 +314,9 @@ async def get_product_sync_status(
     sku: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Get sync status for a specific product SKU.
-    """
-    from supabase import create_client
-
+    """Get sync status for a specific product SKU."""
     user_id = current_user["user_id"]
-    client = create_client(settings.supabase_url, settings.supabase_key)
+    client = _get_client()
 
     try:
         result = client.table("product_sync_schedule") \
@@ -517,9 +360,7 @@ async def reactivate_product(
     sku: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Reactivate a product that was deactivated due to failures.
-    """
+    """Reactivate a product that was deactivated due to failures."""
     sync_store = get_sync_store()
 
     try:
@@ -542,11 +383,8 @@ async def trigger_immediate_sync(
     sku: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Trigger an immediate sync for a specific product.
-    Bypasses the hourly scheduler.
-    """
-    from celery_app.tasks.sync_dispatcher import sync_single_product_immediate
+    """Trigger an immediate sync for a specific product."""
+    from app.celery_app.tasks.sync_shopify import sync_single_product_immediate
 
     user_id = current_user["user_id"]
 

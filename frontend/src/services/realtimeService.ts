@@ -226,9 +226,9 @@ export function unsubscribe(channel: RealtimeChannel): void {
  * Transform a raw batch record to BatchStatusResponse format
  *
  * Progress calculation matches backend _calculate_progress:
- * - 'search': (normalized_count + failed_count) / total
- * - 'normalized': 100% (search is complete)
- * - 'publishing' or 'publish': (published_count + failed_count) / total
+ * - 'extract': (normalized_count + failed_count) / total
+ * - 'normalize': 100% (extraction is complete)
+ * - 'publish': (published_count + failed_count) / total
  */
 function transformBatchRecord(record: any): BatchStatusResponse {
   const total = record.total_items || 0;
@@ -238,17 +238,17 @@ function transformBatchRecord(record: any): BatchStatusResponse {
   if (total > 0) {
     const batchType = record.batch_type;
 
-    if (batchType === 'search') {
-      // Search stage: progress based on normalization
+    if (batchType === 'extract') {
+      // Extract stage: progress based on normalization
       const completed = (record.normalized_count || 0) + (record.failed_count || 0);
       progressPercent = (completed / total) * 100;
-    } else if (batchType === 'normalized') {
-      // Normalized stage: show actual normalized progress (normalized_count / total_items)
+    } else if (batchType === 'normalize') {
+      // Normalize stage: show actual normalized progress (normalized_count / total_items)
       // This reflects how many items were successfully normalized out of total requested
       const normalizedCount = record.normalized_count || 0;
       progressPercent = (normalizedCount / total) * 100;
-    } else if (batchType === 'publishing' || batchType === 'publish') {
-      // Publishing stage: progress based on published items
+    } else if (batchType === 'publish') {
+      // Publish stage: progress based on published items
       // Use publish_part_numbers length as total if available, otherwise use total_items
       const publishTotal = record.publish_part_numbers?.length || total;
       const completed = (record.published_count || 0) + (record.failed_count || 0);
@@ -267,6 +267,8 @@ function transformBatchRecord(record: any): BatchStatusResponse {
     failed_count: record.failed_count || 0,
     progress_percent: Math.min(progressPercent, 100), // Cap at 100%
     failed_items: record.failed_items || [],
+    skipped_count: record.skipped_count || 0,
+    skipped_part_numbers: record.skipped_part_numbers || [],
     part_numbers: record.part_numbers || [],
     publish_part_numbers: record.publish_part_numbers || [],
     error_message: record.error_message,
