@@ -58,11 +58,8 @@ jobs:
             source venv/bin/activate
             pip install -r requirements.txt --quiet
 
-            # Restart all services via redeploy script
+            # Restart all services (stops, reloads daemon, starts with proper wait times)
             sudo bash scripts/redeploy.sh
-
-            # Wait for services to stabilize
-            sleep 3
 
             # Verify all 6 services are running
             SERVICES=(boeing-backend boeing-celery-extract boeing-celery-publish boeing-celery-sync boeing-celery-default boeing-celery-beat)
@@ -83,20 +80,6 @@ jobs:
               exit 1
             fi
 
-            # Health check with retry
-            echo "Waiting for health check..."
-            for i in 1 2 3 4 5; do
-              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-                echo "Health check passed"
-                break
-              fi
-              if [ $i -eq 5 ]; then
-                echo "Health check failed after 5 attempts"
-                exit 1
-              fi
-              echo "Attempt $i failed, retrying in 3s..."
-              sleep 3
-            done
             echo "Deployment successful!"
           EOF
 

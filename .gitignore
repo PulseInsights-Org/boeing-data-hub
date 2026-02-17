@@ -45,3 +45,7 @@ htmlcov/
 backend/.env
 frontend/.env.local
 .claude
+
+backend/celerybeat-schedule
+backend/celerybeat-schedule-shm
+backend/celerybeat-schedule-wal

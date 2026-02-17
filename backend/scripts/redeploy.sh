@@ -43,17 +43,33 @@ echo ""
 echo ">> Reloading systemd daemon..."
 systemctl daemon-reload
 
-# ── Start all services (forward order: backend first, beat last) ──
+# ── Start backend first, then workers, then beat ──
 echo ""
 echo ">> Starting services..."
-for svc in "${SERVICES[@]}"; do
-  echo "   Starting $svc..."
-  systemctl start "$svc"
-done
-echo "   All services started."
 
-# ── Wait for startup ──
+echo "   Starting boeing-backend..."
+systemctl start boeing-backend
 sleep 3
+
+echo "   Starting boeing-celery-extract..."
+systemctl start boeing-celery-extract
+echo "   Starting boeing-celery-publish..."
+systemctl start boeing-celery-publish
+echo "   Starting boeing-celery-sync..."
+systemctl start boeing-celery-sync
+echo "   Starting boeing-celery-default..."
+systemctl start boeing-celery-default
+
+# Give workers time to fully initialize (prefork pool spawn)
+sleep 5
+
+echo "   Starting boeing-celery-beat..."
+systemctl start boeing-celery-beat
+
+# Wait for everything to stabilize
+sleep 3
+
+echo "   All services started."
 
 # ── Status check ──
 echo ""
@@ -64,7 +80,7 @@ ALL_OK=true
 for svc in "${SERVICES[@]}"; do
   status=$(systemctl is-active "$svc" 2>/dev/null || echo "inactive")
   if [ "$status" = "active" ]; then
-    echo "   OK  $svc"
+    echo "   OK    $svc"
   else
     echo "   FAIL  $svc  ($status)"
     ALL_OK=false
