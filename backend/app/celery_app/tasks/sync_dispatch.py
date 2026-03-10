@@ -1,39 +1,39 @@
 """
 Sync dispatch tasks — hourly scheduler, retry, and end-of-day cleanup.
 
-Sync dispatch tasks.
-
 Tasks:
-- dispatch_hourly: Runs periodically, dispatches batches for current time bucket
-- dispatch_retry: Runs every 4 hours, retries failed products
-- end_of_day_cleanup: Daily cleanup at midnight UTC
-Version: 1.0.0
+- dispatch_hourly:          Main sync dispatcher with 3-layer dedup + conflict guard
+- dispatch_deferred_catchup: Immediate catch-up after extraction session completes
+- dispatch_retry:           Retry failed products (every 4 hours)
+- end_of_day_cleanup:       Daily cleanup at midnight UTC
+
+All slot-distribution and dispatch business logic lives in SyncDispatchService.
+This file handles only Celery-specific concerns: beat scheduling, Redis locking,
+deferred bucket tracking, and task queuing.
+
+Version: 1.2.0
 """
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List
 
 from app.celery_app.celery_config import celery_app, SYNC_MODE, SYNC_TEST_BUCKET_COUNT, SYNC_ENABLED
-from app.celery_app.tasks.base import BaseTask
+from app.celery_app.tasks.base import BaseTask, get_batch_store, get_sync_dispatch_service
 from app.celery_app.tasks.sync_boeing import process_boeing_batch
-from app.db.sync_store import get_sync_store
-from app.utils.slot_manager import get_slot_distribution, MAX_SKUS_PER_API_CALL
-from app.utils.batch_grouping import calculate_batch_groups
 from app.utils.schedule_helpers import get_current_hour_utc
 from app.utils.cycle_tracker import record_bucket_dispatched
 from app.celery_app.tasks.report_generation import wait_for_cycle_completion
 from app.utils.dispatch_lock import (
     acquire_dispatch_lock,
     release_dispatch_lock,
-    record_dispatched_skus,
-    get_already_dispatched_skus,
     compute_window_start,
+    record_deferred_bucket,
+    get_deferred_buckets,
+    clear_deferred_buckets,
+    acquire_catchup_lock,
+    release_catchup_lock,
 )
 
 logger = logging.getLogger(__name__)
-
-BATCH_SIZE = MAX_SKUS_PER_API_CALL  # 10 SKUs per Boeing API call
-MIN_PRODUCTS_FOR_ACTIVE_SLOT = 10
 
 
 @celery_app.task(
@@ -44,25 +44,29 @@ MIN_PRODUCTS_FOR_ACTIVE_SLOT = 10
 )
 def dispatch_hourly(self):
     """
-    Main sync dispatcher with three-layer deduplication.
+    Main sync dispatcher with three-layer deduplication + conflict guard.
 
     Layer 1: Redis dispatch lock — only ONE dispatch_hourly per bucket window.
-    Layer 2: DB window_start filter — exclude products already synced this window.
-    Layer 3: Redis SKU dedup set — subtract already-dispatched SKUs.
+    Layer 2: DB window_start filter — handled inside SyncDispatchService.dispatch_bucket.
+    Layer 3: Redis SKU dedup set  — handled inside SyncDispatchService.dispatch_bucket.
 
-    PRODUCTION: Called at :45 of each hour, uses hour buckets (0-23).
-    TESTING: Called every 10 minutes, uses minute buckets (0-5).
+    CONFLICT GUARD: If an extraction/publish session is active, the current
+    bucket is deferred (Redis) and sync is skipped. Deferred buckets are
+    processed via two paths:
+    - Active path:  dispatch_deferred_catchup fires immediately after extraction.
+    - Passive path: this task checks for deferred buckets on the next beat run.
     """
     if not SYNC_ENABLED:
         logger.info("Auto-sync is disabled (SYNC_ENABLED=false), skipping dispatch")
         return {"status": "skipped", "reason": "sync_disabled"}
 
     now = datetime.now(timezone.utc)
+    svc = get_sync_dispatch_service()
 
     if SYNC_MODE == "testing":
         current_bucket = now.minute // 10
         logger.info("=" * 60)
-        logger.info(f"[TESTING MODE] Sync Dispatch Started")
+        logger.info("[TESTING MODE] Sync Dispatch Started")
         logger.info(f"   Minute bucket: {current_bucket} (of {SYNC_TEST_BUCKET_COUNT})")
         logger.info(f"   Current time: {now.strftime('%H:%M:%S')} UTC")
         logger.info("=" * 60)
@@ -72,132 +76,72 @@ def dispatch_hourly(self):
             logger.debug(f"Not in sync window (minute={now.minute}), skipping")
             return {"status": "skipped", "reason": "not_in_sync_window"}
         logger.info("=" * 60)
-        logger.info(f"[PRODUCTION MODE] Sync Dispatch Started")
+        logger.info("[PRODUCTION MODE] Sync Dispatch Started")
         logger.info(f"   Hour bucket: {current_bucket} (of 24)")
         logger.info(f"   Current time: {now.strftime('%H:%M:%S')} UTC")
         logger.info("=" * 60)
 
-    # ── Layer 1: Dispatch idempotency lock ──────────────────────────────
+    # ── Conflict guard: defer if extraction/publish session is active ──
+    if svc.is_extraction_session_active(get_batch_store()):
+        record_deferred_bucket(current_bucket)
+        logger.warning(
+            f"EXTRACTION/PUBLISH IN PROGRESS — deferring bucket {current_bucket}. "
+            "Sync will resume after session completes."
+        )
+        return {
+            "status": "deferred",
+            "reason": "extraction_in_progress",
+            "deferred_bucket": current_bucket,
+        }
+
+    # ── Layer 1: Dispatch idempotency lock ────────────────────────────
     task_id = self.request.id or "unknown"
     if not acquire_dispatch_lock(current_bucket, task_id):
         logger.info(f"Dispatch already running for bucket {current_bucket}, skipping")
         return {"status": "skipped", "reason": "already_dispatched", "bucket": current_bucket}
 
-    # Compute the start of the current bucket window for the DB cooldown filter
     window_start = compute_window_start()
-    logger.info(f"Window start: {window_start.isoformat()} (products synced after this are excluded)")
-
-    sync_store = get_sync_store()
+    logger.info(
+        f"Window start: {window_start.isoformat()} "
+        f"(products synced after this are excluded)"
+    )
 
     try:
-        slot_counts = sync_store.get_slot_counts()
-        distribution = get_slot_distribution(slot_counts)
+        # ── Passive path: catch up deferred buckets (safety net) ──────
+        deferred_buckets = get_deferred_buckets()
+        deferred_stats = []
+        if deferred_buckets:
+            if acquire_catchup_lock(task_id):
+                try:
+                    logger.info(
+                        f"Passive catch-up: processing {len(deferred_buckets)} "
+                        f"deferred bucket(s): {sorted(deferred_buckets)}"
+                    )
+                    for bucket in sorted(deferred_buckets):
+                        bucket_stats = svc.dispatch_bucket(
+                            bucket, window_start, process_boeing_batch.delay
+                        )
+                        deferred_stats.append(bucket_stats)
+                        try:
+                            record_bucket_dispatched(bucket)
+                        except Exception as tracker_err:
+                            logger.warning(
+                                f"Cycle tracker error for deferred bucket {bucket}: {tracker_err}"
+                            )
+                    clear_deferred_buckets()
+                finally:
+                    release_catchup_lock()
+            else:
+                logger.info("Active catch-up already running, skipping deferred processing")
 
-        logger.info(
-            f"Slot distribution: {distribution['active_count']} active, "
-            f"{distribution['filling_count']} filling, "
-            f"{distribution['dormant_count']} dormant"
-        )
+        # ── Process current bucket ────────────────────────────────────
+        current_stats = svc.dispatch_bucket(current_bucket, window_start, process_boeing_batch.delay)
 
-        batches_dispatched = 0
-        products_dispatched = 0
-        skus_deduped = 0
-
-        current_count = slot_counts.get(current_bucket, 0)
-
-        if current_count >= MIN_PRODUCTS_FOR_ACTIVE_SLOT:
-            # ACTIVE SLOT: Process normally
-            # ── Layer 2: DB query with window_start cooldown ────────────
-            products = sync_store.get_products_for_hour(
-                current_bucket,
-                status_filter=["pending", "success"],
-                window_start=window_start,
-            )
-
-            # ── Layer 3: Redis SKU dedup — subtract already-dispatched ──
-            already_dispatched = get_already_dispatched_skus(current_bucket)
-            if already_dispatched:
-                before_count = len(products)
-                products = [p for p in products if p["sku"] not in already_dispatched]
-                skus_deduped = before_count - len(products)
-                if skus_deduped > 0:
-                    logger.info(f"SKU dedup: filtered {skus_deduped} already-dispatched SKUs")
-
-            if products:
-                batches = calculate_batch_groups(products, BATCH_SIZE)
-                all_dispatched_skus = []
-
-                for batch in batches:
-                    skus = [p["sku"] for p in batch]
-                    user_id = batch[0].get("user_id", "system")
-
-                    sync_store.mark_products_syncing(skus)
-                    process_boeing_batch.delay(skus, user_id, current_bucket)
-
-                    all_dispatched_skus.extend(skus)
-                    batches_dispatched += 1
-                    products_dispatched += len(skus)
-
-                # Record dispatched SKUs in Redis for future dedup
-                record_dispatched_skus(current_bucket, all_dispatched_skus)
-
-                logger.info(
-                    f"Active slot {current_bucket}: dispatched {batches_dispatched} batches, "
-                    f"{products_dispatched} products"
-                )
-
-        elif current_count > 0:
-            # FILLING SLOT: Aggregate with other filling slots
-            logger.info(f"Filling slot {current_bucket} ({current_count} products)")
-
-            all_filling_products = []
-            for slot in distribution['filling_slots']:
-                slot_products = sync_store.get_products_for_hour(
-                    slot,
-                    status_filter=["pending", "success"],
-                    window_start=window_start,
-                )
-                all_filling_products.extend(slot_products)
-
-            # ── Layer 3: Redis SKU dedup for filling slots ──────────────
-            already_dispatched = get_already_dispatched_skus(current_bucket)
-            if already_dispatched:
-                before_count = len(all_filling_products)
-                all_filling_products = [p for p in all_filling_products if p["sku"] not in already_dispatched]
-                skus_deduped = before_count - len(all_filling_products)
-                if skus_deduped > 0:
-                    logger.info(f"SKU dedup (filling): filtered {skus_deduped} already-dispatched SKUs")
-
-            if all_filling_products:
-                batches = calculate_batch_groups(all_filling_products, BATCH_SIZE)
-                all_dispatched_skus = []
-
-                for batch in batches:
-                    skus = [p["sku"] for p in batch]
-                    user_id = batch[0].get("user_id", "system")
-
-                    sync_store.mark_products_syncing(skus)
-                    process_boeing_batch.delay(skus, user_id, current_bucket)
-
-                    all_dispatched_skus.extend(skus)
-                    batches_dispatched += 1
-                    products_dispatched += len(skus)
-
-                record_dispatched_skus(current_bucket, all_dispatched_skus)
-
-                logger.info(
-                    f"Filling slots aggregated: {len(distribution['filling_slots'])} slots, "
-                    f"{batches_dispatched} batches, {products_dispatched} products"
-                )
-
-        else:
-            logger.debug(f"Dormant slot {current_bucket}, no products to sync")
-
-        stuck_reset = sync_store.reset_stuck_products(stuck_threshold_minutes=30)
+        stuck_reset = svc._store.reset_stuck_products(stuck_threshold_minutes=30)
         if stuck_reset > 0:
             logger.warning(f"Reset {stuck_reset} stuck products")
 
-        # Record this bucket in the cycle tracker and auto-trigger report on completion
+        # Record bucket and auto-trigger report on cycle completion
         cycle_complete = False
         try:
             cycle_complete = record_bucket_dispatched(current_bucket)
@@ -212,11 +156,12 @@ def dispatch_hourly(self):
             "mode": SYNC_MODE,
             "bucket": current_bucket,
             "bucket_type": "minute" if SYNC_MODE == "testing" else "hour",
-            "batches_dispatched": batches_dispatched,
-            "products_dispatched": products_dispatched,
-            "skus_deduped": skus_deduped,
+            "batches_dispatched": current_stats["batches_dispatched"],
+            "products_dispatched": current_stats["products_dispatched"],
+            "skus_deduped": current_stats["skus_deduped"],
             "stuck_reset": stuck_reset,
             "cycle_complete": cycle_complete,
+            "deferred_catchup": deferred_stats if deferred_stats else None,
         }
 
     except Exception as e:
@@ -230,65 +175,109 @@ def dispatch_hourly(self):
 @celery_app.task(
     bind=True,
     base=BaseTask,
+    name="tasks.sync_dispatch.dispatch_deferred_catchup",
+    max_retries=0
+)
+def dispatch_deferred_catchup(self):
+    """Active catch-up path — triggered when the last extraction batch completes.
+
+    Fires immediately so deferred buckets are processed within seconds of
+    extraction completing, without waiting for the next beat run.
+    Uses a shared Redis lock to prevent overlap with the passive path.
+    """
+    if not SYNC_ENABLED:
+        return {"status": "skipped", "reason": "sync_disabled"}
+
+    svc = get_sync_dispatch_service()
+
+    if svc.is_extraction_session_active(get_batch_store()):
+        logger.info("Another extraction session active, deferring catch-up")
+        return {"status": "deferred", "reason": "new_extraction_in_progress"}
+
+    deferred_buckets = get_deferred_buckets()
+    if not deferred_buckets:
+        logger.info("No deferred buckets to catch up")
+        return {"status": "skipped", "reason": "no_deferred_buckets"}
+
+    task_id = self.request.id or "catchup"
+    if not acquire_catchup_lock(task_id):
+        logger.info("Catch-up lock held (dispatch_hourly is handling it), skipping")
+        return {"status": "skipped", "reason": "catchup_lock_held"}
+
+    logger.info(
+        f"Active catch-up: processing {len(deferred_buckets)} "
+        f"deferred bucket(s): {sorted(deferred_buckets)}"
+    )
+
+    window_start = compute_window_start()
+    deferred_stats = []
+
+    try:
+        cycle_complete = False
+        for bucket in sorted(deferred_buckets):
+            bucket_stats = svc.dispatch_bucket(bucket, window_start, process_boeing_batch.delay)
+            deferred_stats.append(bucket_stats)
+            try:
+                if record_bucket_dispatched(bucket):
+                    cycle_complete = True
+            except Exception as tracker_err:
+                logger.warning(
+                    f"Cycle tracker error for deferred bucket {bucket}: {tracker_err}"
+                )
+
+        clear_deferred_buckets()
+
+        total_products = sum(s["products_dispatched"] for s in deferred_stats)
+        total_batches = sum(s["batches_dispatched"] for s in deferred_stats)
+        logger.info(
+            f"Active catch-up complete: {len(deferred_buckets)} buckets, "
+            f"{total_batches} batches, {total_products} products dispatched"
+        )
+
+        if cycle_complete:
+            wait_for_cycle_completion.delay()
+            logger.info("Sync cycle complete after catch-up — triggering report")
+
+        return {
+            "status": "completed",
+            "deferred_buckets": sorted(deferred_buckets),
+            "total_batches": total_batches,
+            "total_products": total_products,
+            "bucket_stats": deferred_stats,
+            "cycle_complete": cycle_complete,
+        }
+
+    except Exception as e:
+        logger.error(f"Deferred catch-up failed: {e}")
+        raise
+
+    finally:
+        release_catchup_lock()
+
+
+@celery_app.task(
+    bind=True,
+    base=BaseTask,
     name="tasks.sync_dispatch.dispatch_retry",
     max_retries=0
 )
 def dispatch_retry(self):
-    """
-    Retry dispatcher for failed products.
-    Called every 4 hours by Celery Beat.
-    """
+    """Retry dispatcher for failed products. Called every 4 hours by Celery Beat."""
     if not SYNC_ENABLED:
         logger.info("Auto-sync is disabled (SYNC_ENABLED=false), skipping retry dispatch")
         return {"status": "skipped", "reason": "sync_disabled"}
 
-    logger.info("=== Retry Sync Dispatch ===")
+    svc = get_sync_dispatch_service()
 
-    sync_store = get_sync_store()
-
-    try:
-        failed_products = sync_store.get_failed_products_for_retry(limit=200)
-
-        if not failed_products:
-            logger.info("No failed products to retry")
-            return {"status": "completed", "retries": 0}
-
-        logger.info(f"Found {len(failed_products)} products for retry")
-
-        user_batches: Dict[str, List[Dict]] = {}
-        for product in failed_products:
-            user_id = product.get("user_id", "system")
-            if user_id not in user_batches:
-                user_batches[user_id] = []
-            user_batches[user_id].append(product)
-
-        batches_dispatched = 0
-        products_dispatched = 0
-
-        for user_id, products in user_batches.items():
-            batches = calculate_batch_groups(products, BATCH_SIZE)
-
-            for batch in batches:
-                skus = [p["sku"] for p in batch]
-                sync_store.mark_products_syncing(skus)
-                process_boeing_batch.delay(skus, user_id, -1)  # -1 indicates retry
-
-                batches_dispatched += 1
-                products_dispatched += len(skus)
-
-        logger.info(
-            f"Retry dispatch: {batches_dispatched} batches, {products_dispatched} products"
+    if svc.is_extraction_session_active(get_batch_store()):
+        logger.warning(
+            "EXTRACTION/PUBLISH IN PROGRESS — deferring retry dispatch. "
+            "Retries will run on next schedule."
         )
+        return {"status": "deferred", "reason": "extraction_in_progress"}
 
-        return {
-            "status": "completed",
-            "batches_dispatched": batches_dispatched,
-            "products_retried": products_dispatched,
-        }
-
-    except Exception as e:
-        logger.error(f"Retry sync dispatch failed: {e}")
-        raise
+    logger.info("=== Retry Sync Dispatch ===")
+    return svc.dispatch_retry(process_boeing_batch.delay)
 
 
 @celery_app.task(
@@ -298,40 +287,10 @@ def dispatch_retry(self):
     max_retries=0
 )
 def end_of_day_cleanup(self):
-    """
-    Daily cleanup task at midnight UTC.
-
-    Resets stuck products, logs daily statistics.
-    """
+    """Daily cleanup task at midnight UTC — resets stuck products and logs stats."""
     if not SYNC_ENABLED:
         logger.info("Auto-sync is disabled (SYNC_ENABLED=false), skipping cleanup")
         return {"status": "skipped", "reason": "sync_disabled"}
 
-    logger.info("=== End of Day Cleanup ===")
-
-    sync_store = get_sync_store()
-
-    try:
-        stuck_reset = sync_store.reset_stuck_products(stuck_threshold_minutes=60)
-
-        status_summary = sync_store.get_sync_status_summary()
-        distribution = sync_store.get_slot_distribution_summary()
-
-        logger.info(f"Daily Stats: {status_summary}")
-        logger.info(f"Slot Distribution: efficiency={distribution['efficiency_percent']}%")
-
-        if status_summary.get("high_failure_count", 0) > 0:
-            logger.warning(
-                f"Products with 3+ failures: {status_summary['high_failure_count']}"
-            )
-
-        return {
-            "status": "completed",
-            "stuck_reset": stuck_reset,
-            "summary": status_summary,
-            "efficiency": distribution["efficiency_percent"],
-        }
-
-    except Exception as e:
-        logger.error(f"End of day cleanup failed: {e}")
-        raise
+    svc = get_sync_dispatch_service()
+    return svc.end_of_day_cleanup()

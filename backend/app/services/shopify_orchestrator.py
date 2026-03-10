@@ -82,7 +82,36 @@ class ShopifyOrchestrator:
         return data
 
     async def find_product_by_sku(self, sku: str) -> Optional[str]:
-        """Find a product ID by SKU (REST search, first 50 products)."""
+        """Find a product ID by SKU using GraphQL (searches entire catalog).
+
+        Falls back to REST search (first 50 products) if GraphQL fails.
+        Returns the Shopify product ID as a string, or None if not found.
+        """
+        # Primary: GraphQL search (no 50-product limit)
+        try:
+            query = (
+                "query FindBySku($skuQuery: String!) { "
+                "productVariants(first: 5, query: $skuQuery) { "
+                "edges { node { id sku product { id } } } } }"
+            )
+            body = {"query": query, "variables": {"skuQuery": f"sku:{sku}"}}
+            data = await self._client.call_shopify("POST", "/graphql.json", json=body)
+
+            if data and not data.get("errors"):
+                edges = (data.get("data") or {}).get("productVariants", {}).get("edges", [])
+                for edge in edges:
+                    node = edge.get("node") or {}
+                    if node.get("sku") == sku:
+                        product_gid = (node.get("product") or {}).get("id", "")
+                        # Extract numeric ID from GID: "gid://shopify/Product/99001" -> "99001"
+                        if product_gid:
+                            numeric_id = product_gid.rsplit("/", 1)[-1]
+                            return numeric_id
+                return None
+        except Exception as gql_err:
+            logger.warning(f"GraphQL SKU search failed, falling back to REST: {gql_err}")
+
+        # Fallback: REST search (limited to first 50 products)
         params = {"limit": 50, "fields": "id,variants"}
         data = await self._client.call_shopify("GET", "/products.json", params=params)
         products = data.get("products") or []

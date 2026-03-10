@@ -1,9 +1,9 @@
 """
 Integration tests for Celery task registration and configuration.
 
-Verifies all 12 tasks are registered with correct names in the Celery app,
+Verifies all 18 tasks are registered with correct names in the Celery app,
 task function signatures exist, and queue routing is properly configured.
-Version: 1.0.0
+Version: 1.2.0
 """
 import os
 import pytest
@@ -11,7 +11,7 @@ import pytest
 os.environ.setdefault("AUTO_START_CELERY", "false")
 
 
-# The 12 expected task names from the codebase
+# The 18 expected task names from the codebase
 EXPECTED_TASK_NAMES = [
     # Extraction tasks (2)
     "tasks.extraction.process_bulk_search",
@@ -21,19 +21,24 @@ EXPECTED_TASK_NAMES = [
     # Publishing tasks (2)
     "tasks.publishing.publish_batch",
     "tasks.publishing.publish_product",
-    # Batch tasks (3)
+    # Batch tasks (4)
     "tasks.batch.check_batch_completion",
     "tasks.batch.cancel_batch",
+    "tasks.batch.reconcile_batch",
     "tasks.batch.cleanup_stale_batches",
-    # Sync dispatch tasks (3)
+    # Sync dispatch tasks (4)
     "tasks.sync_dispatch.dispatch_hourly",
     "tasks.sync_dispatch.dispatch_retry",
     "tasks.sync_dispatch.end_of_day_cleanup",
+    "tasks.sync_dispatch.dispatch_deferred_catchup",
     # Sync boeing tasks (1)
     "tasks.sync_boeing.process_boeing_batch",
     # Sync shopify tasks (2)
     "tasks.sync_shopify.update_shopify_product",
     "tasks.sync_shopify.sync_single_product_immediate",
+    # Report generation tasks (2)
+    "tasks.report_generation.generate_cycle_report",
+    "tasks.report_generation.wait_for_cycle_completion",
 ]
 
 
@@ -59,7 +64,7 @@ class TestCeleryTaskRegistration:
     """Tests for Celery task registration."""
 
     def test_all_expected_tasks_registered(self, celery_tasks):
-        """All 14 expected task names should be present in celery_app.tasks."""
+        """All 18 expected task names should be present in celery_app.tasks."""
         for task_name in EXPECTED_TASK_NAMES:
             assert task_name in celery_tasks, (
                 f"Task '{task_name}' not found in registered tasks. "
@@ -88,18 +93,18 @@ class TestCeleryTaskRegistration:
         assert len(publishing_tasks) == 2
 
     def test_batch_task_count(self, celery_tasks):
-        """Batch module should have 3 tasks."""
+        """Batch module should have 4 tasks."""
         batch_tasks = [
             name for name in celery_tasks if name.startswith("tasks.batch.")
         ]
-        assert len(batch_tasks) == 3
+        assert len(batch_tasks) == 4
 
     def test_sync_dispatch_task_count(self, celery_tasks):
-        """Sync dispatch module should have 3 tasks."""
+        """Sync dispatch module should have 4 tasks."""
         dispatch_tasks = [
             name for name in celery_tasks if name.startswith("tasks.sync_dispatch.")
         ]
-        assert len(dispatch_tasks) == 3
+        assert len(dispatch_tasks) == 4
 
     def test_sync_boeing_task_count(self, celery_tasks):
         """Sync boeing module should have 1 task."""
@@ -116,7 +121,7 @@ class TestCeleryTaskRegistration:
         assert len(shopify_tasks) == 2
 
     def test_total_custom_task_count(self, celery_tasks):
-        """There should be exactly 14 custom tasks (not counting celery builtins)."""
+        """There should be exactly 18 custom tasks (not counting celery builtins)."""
         custom_tasks = [
             name for name in celery_tasks if not name.startswith("celery.")
         ]
@@ -152,10 +157,12 @@ class TestCeleryTaskFunctions:
         from app.celery_app.tasks.batch import (
             check_batch_completion,
             cancel_batch,
+            reconcile_batch,
             cleanup_stale_batches,
         )
         assert callable(check_batch_completion)
         assert callable(cancel_batch)
+        assert callable(reconcile_batch)
         assert callable(cleanup_stale_batches)
 
     def test_sync_dispatch_task_functions_importable(self):
@@ -164,10 +171,12 @@ class TestCeleryTaskFunctions:
             dispatch_hourly,
             dispatch_retry,
             end_of_day_cleanup,
+            dispatch_deferred_catchup,
         )
         assert callable(dispatch_hourly)
         assert callable(dispatch_retry)
         assert callable(end_of_day_cleanup)
+        assert callable(dispatch_deferred_catchup)
 
     def test_sync_boeing_task_function_importable(self):
         """Sync boeing task function should be importable."""
@@ -182,6 +191,15 @@ class TestCeleryTaskFunctions:
         )
         assert callable(update_shopify_product)
         assert callable(sync_single_product_immediate)
+
+    def test_report_generation_task_functions_importable(self):
+        """Report generation task functions should be importable."""
+        from app.celery_app.tasks.report_generation import (
+            generate_cycle_report,
+            wait_for_cycle_completion,
+        )
+        assert callable(generate_cycle_report)
+        assert callable(wait_for_cycle_completion)
 
 
 @pytest.mark.integration

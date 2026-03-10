@@ -2,8 +2,10 @@
 Publishing service — Shopify product create/update with saga pattern.
 
 Handles route-level and batch-level product publishing, including
-image upload, location mapping, and saga compensation on failure.
-Version: 1.0.0
+image upload, location mapping, 4-tier idempotency, and saga
+compensation on DB failure.
+
+Version: 1.1.0
 """
 import json
 import logging
@@ -29,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers (module-level so tasks can import them if needed)
 # ---------------------------------------------------------------------------
 
 def strip_variant_suffix(value: str) -> str:
@@ -129,7 +131,7 @@ class PublishingService:
         self._logger = logging.getLogger("publishing_service")
 
     # ------------------------------------------------------------------
-    # Route-level publish (simple path, from shopify_service.py)
+    # Route-level publish (simple path)
     # ------------------------------------------------------------------
 
     async def publish_product_by_part_number(
@@ -158,13 +160,9 @@ class PublishingService:
 
         existing_shopify_id = record.get("shopify_product_id")
 
-        # Image upload
         record = await self._upload_image(record, part_number)
-
-        # Prepare shopify payload
         record = self._prepare_record_for_route(record)
 
-        # Publish or update
         shopify_product_id = await self._create_or_update(
             record, part_number, existing_shopify_id
         )
@@ -182,7 +180,7 @@ class PublishingService:
         return {"success": True, "shopifyProductId": shopify_id_str}
 
     # ------------------------------------------------------------------
-    # Batch-level publish (full path, from publishing task logic)
+    # Batch-level publish (full path, called from publishing task)
     # ------------------------------------------------------------------
 
     async def publish_product_for_batch(
@@ -190,12 +188,19 @@ class PublishingService:
         record: Dict[str, Any],
         part_number: str,
         user_id: str = "system",
+        assigned_slot: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Full publish with validation, location mapping, image upload,
-        saga compensation, and sync schedule creation.
+        4-tier idempotency, saga compensation, and sync schedule creation.
 
-        Returns dict with success, shopify_product_id, action, is_new_product.
+        Idempotency tiers:
+          1. staging.shopify_product_id   -> UPDATE
+          2. Shopify search by SKU        -> UPDATE
+          3. products table               -> UPDATE  (safety-net)
+          4. CREATE new product
+
+        Returns dict with: success, shopify_product_id, action, is_new_product.
         Raises NonRetryableError for validation failures.
         """
         # --- 1. Validate price & inventory ---
@@ -209,11 +214,13 @@ class PublishingService:
 
         if price is None or price == 0:
             raise NonRetryableError(
-                f"Product {part_number} has no valid price. Cannot publish."
+                f"Product {part_number} has no valid price (price=0 or missing). "
+                "Cannot publish to Shopify."
             )
         if inventory is None or inventory == 0:
             raise NonRetryableError(
-                f"Product {part_number} has no inventory. Cannot publish."
+                f"Product {part_number} has no inventory (quantity=0 or missing). "
+                "Cannot publish to Shopify."
             )
 
         # --- 2. Location mapping ---
@@ -237,12 +244,13 @@ class PublishingService:
 
             if skipped:
                 self._logger.warning(
-                    f"Product {part_number}: skipping non-mapped locations {skipped}"
+                    f"Product {part_number}: skipping non-mapped locations {skipped}. "
+                    f"Mapped: {[l.get('location') for l in mapped]}"
                 )
             if not mapped:
                 raise NonRetryableError(
-                    f"Product {part_number} only at non-mapped locations {skipped}. "
-                    "No publishable US inventory."
+                    f"Product {part_number} is only available at non-mapped locations "
+                    f"{skipped}. No publishable US inventory. Cannot publish."
                 )
             record.setdefault("shopify", {})
             record["shopify"]["location_quantities"] = mapped
@@ -260,24 +268,80 @@ class PublishingService:
         # --- 4. Prepare Shopify payload ---
         record = prepare_shopify_record(record)
 
-        # --- 5. Publish or update in Shopify (idempotent) ---
+        # --- 5. 4-tier idempotent publish ---
         is_new_product = False
+        shopify_product_id = None
+
         if existing_shopify_id:
+            self._logger.info(
+                f"Tier 1: Updating existing Shopify product "
+                f"{existing_shopify_id} for {part_number}"
+            )
             result = await self._shopify.update_product(existing_shopify_id, record)
             shopify_product_id = result.get("product", {}).get("id") or existing_shopify_id
+
         else:
             sku = record.get("sku") or part_number
             found_id = await self._shopify.find_product_by_sku(sku)
+
             if found_id:
+                self._logger.info(
+                    f"Tier 2: Found existing Shopify product by SKU {sku}, "
+                    f"updating {found_id}"
+                )
                 result = await self._shopify.update_product(found_id, record)
                 shopify_product_id = result.get("product", {}).get("id") or found_id
+
             else:
-                result = await self._shopify.publish_product(record)
-                shopify_product_id = result.get("product", {}).get("id")
-                is_new_product = True
+                # Tier 3: Check products table (source of truth)
+                tier3_shopify_id = None
+                try:
+                    existing_product = await self._products.get_product_by_part_number(
+                        part_number, user_id=user_id
+                    )
+                    if existing_product and existing_product.get("shopify_product_id"):
+                        tier3_shopify_id = existing_product["shopify_product_id"]
+                except Exception as tier3_err:
+                    self._logger.warning(
+                        f"Tier 3 product lookup failed (will CREATE): {tier3_err}"
+                    )
+
+                if tier3_shopify_id:
+                    self._logger.info(
+                        f"Tier 3: Found shopify_product_id={tier3_shopify_id} "
+                        f"in products table for {part_number}, updating"
+                    )
+                    result = await self._shopify.update_product(tier3_shopify_id, record)
+                    shopify_product_id = (
+                        result.get("product", {}).get("id") or tier3_shopify_id
+                    )
+                else:
+                    # Tier 4: Truly new product
+                    self._logger.info(f"Tier 4: Creating new Shopify product for {part_number}")
+                    result = await self._shopify.publish_product(record)
+                    shopify_product_id = result.get("product", {}).get("id")
+                    is_new_product = True
 
         if not shopify_product_id:
             raise ValueError("Shopify did not return product ID")
+
+        # --- 5.5. Pre-save Shopify ID to staging for traceability ---
+        # Even if the full DB save (step 6) fails, this ensures we can trace
+        # which Shopify products were created and avoid ghost products.
+        if is_new_product:
+            try:
+                await self._staging._update(
+                    "product_staging",
+                    {"sku": part_number, "user_id": user_id},
+                    {"shopify_product_id": str(shopify_product_id)},
+                )
+                self._logger.info(
+                    f"Pre-saved Shopify ID {shopify_product_id} to staging for {part_number}"
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"Could not pre-save Shopify ID to staging for {part_number}: {e}"
+                )
 
         # --- 6. DB save with saga compensation ---
         try:
@@ -295,11 +359,19 @@ class PublishingService:
                 )
                 try:
                     await self._shopify.delete_product(shopify_product_id)
+                    self._logger.info(
+                        f"Compensation successful: deleted orphaned "
+                        f"Shopify product {shopify_product_id}"
+                    )
                 except Exception as rollback_err:
                     self._logger.critical(
                         f"ORPHANED PRODUCT: Shopify ID {shopify_product_id} "
                         f"for {part_number}. DB: {db_err}, Rollback: {rollback_err}"
                     )
+            else:
+                self._logger.error(
+                    f"DB save failed after Shopify UPDATE for {part_number}: {db_err}"
+                )
             raise db_err
 
         # --- 7. Sync schedule ---
@@ -312,6 +384,11 @@ class PublishingService:
                     initial_price=record.get("list_price") or record.get("net_price"),
                     initial_quantity=record.get("inventory_quantity"),
                     shopify_product_id=str(shopify_product_id),
+                    hour_bucket=assigned_slot,
+                )
+                self._logger.info(
+                    f"{'Created' if is_new_product else 'Updated'} sync schedule "
+                    f"for {full_sku}"
                 )
             except Exception as sync_err:
                 self._logger.warning(
@@ -380,7 +457,7 @@ class PublishingService:
         return record
 
     def _prepare_record_for_route(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        """Prepare record for route-level publish (delegates to shared function)."""
+        """Prepare record for route-level publish."""
         return prepare_shopify_record(record)
 
     async def _create_or_update(
@@ -389,7 +466,7 @@ class PublishingService:
         part_number: str,
         existing_shopify_id: Optional[str],
     ):
-        """Idempotent create-or-update in Shopify."""
+        """Idempotent create-or-update in Shopify (2-tier, for route-level)."""
         if existing_shopify_id:
             data = await self._shopify.update_product(existing_shopify_id, record)
             return data.get("product", {}).get("id") or existing_shopify_id

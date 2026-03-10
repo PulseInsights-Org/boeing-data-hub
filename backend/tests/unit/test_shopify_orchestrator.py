@@ -145,17 +145,29 @@ class TestUpdateProduct:
 # ---------------------------------------------------------------------------
 
 class TestFindProductBySku:
-    """Tests for ShopifyOrchestrator.find_product_by_sku."""
+    """Tests for ShopifyOrchestrator.find_product_by_sku (GraphQL + REST fallback)."""
+
+    # --- GraphQL primary path ---
 
     @pytest.mark.asyncio
-    async def test_finds_existing_product(
+    async def test_graphql_finds_product_by_exact_sku(
         self, mock_shopify_client, mock_shopify_inventory
     ):
+        """GraphQL returns matching SKU → extracts numeric ID from GID."""
         mock_shopify_client.call_shopify = AsyncMock(return_value={
-            "products": [
-                {"id": 99001, "variants": [{"sku": "WF338109"}]},
-                {"id": 99002, "variants": [{"sku": "AN3-12A"}]},
-            ]
+            "data": {
+                "productVariants": {
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "gid://shopify/ProductVariant/55001",
+                                "sku": "WF338109",
+                                "product": {"id": "gid://shopify/Product/99001"},
+                            }
+                        }
+                    ]
+                }
+            }
         })
         orch = _make_orchestrator(mock_shopify_client, mock_shopify_inventory)
 
@@ -163,18 +175,125 @@ class TestFindProductBySku:
         assert result == "99001"
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_not_found(
+    async def test_graphql_returns_none_when_no_exact_match(
         self, mock_shopify_client, mock_shopify_inventory
     ):
+        """GraphQL returns variants but none match the exact SKU → None."""
         mock_shopify_client.call_shopify = AsyncMock(return_value={
-            "products": [
-                {"id": 99002, "variants": [{"sku": "AN3-12A"}]},
-            ]
+            "data": {
+                "productVariants": {
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "gid://shopify/ProductVariant/55001",
+                                "sku": "WF338109-DIFFERENT",
+                                "product": {"id": "gid://shopify/Product/99001"},
+                            }
+                        }
+                    ]
+                }
+            }
+        })
+        orch = _make_orchestrator(mock_shopify_client, mock_shopify_inventory)
+
+        result = await orch.find_product_by_sku("WF338109")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_graphql_returns_none_when_no_edges(
+        self, mock_shopify_client, mock_shopify_inventory
+    ):
+        """GraphQL returns empty edges → None."""
+        mock_shopify_client.call_shopify = AsyncMock(return_value={
+            "data": {"productVariants": {"edges": []}}
         })
         orch = _make_orchestrator(mock_shopify_client, mock_shopify_inventory)
 
         result = await orch.find_product_by_sku("NONEXISTENT")
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_graphql_picks_correct_match_among_multiple(
+        self, mock_shopify_client, mock_shopify_inventory
+    ):
+        """GraphQL returns multiple variants; picks the one with exact SKU match."""
+        mock_shopify_client.call_shopify = AsyncMock(return_value={
+            "data": {
+                "productVariants": {
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "gid://shopify/ProductVariant/55001",
+                                "sku": "WF338109-A",
+                                "product": {"id": "gid://shopify/Product/99001"},
+                            }
+                        },
+                        {
+                            "node": {
+                                "id": "gid://shopify/ProductVariant/55002",
+                                "sku": "WF338109",
+                                "product": {"id": "gid://shopify/Product/99002"},
+                            }
+                        },
+                    ]
+                }
+            }
+        })
+        orch = _make_orchestrator(mock_shopify_client, mock_shopify_inventory)
+
+        result = await orch.find_product_by_sku("WF338109")
+        assert result == "99002"
+
+    # --- REST fallback path ---
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_rest_when_graphql_fails(
+        self, mock_shopify_client, mock_shopify_inventory
+    ):
+        """GraphQL raises → falls back to REST search."""
+        mock_shopify_client.call_shopify = AsyncMock(side_effect=[
+            Exception("GraphQL service unavailable"),
+            # REST fallback response
+            {
+                "products": [
+                    {"id": 99001, "variants": [{"sku": "WF338109"}]},
+                ]
+            },
+        ])
+        orch = _make_orchestrator(mock_shopify_client, mock_shopify_inventory)
+
+        result = await orch.find_product_by_sku("WF338109")
+        assert result == "99001"
+
+    @pytest.mark.asyncio
+    async def test_rest_fallback_returns_none_when_not_found(
+        self, mock_shopify_client, mock_shopify_inventory
+    ):
+        """GraphQL raises → REST fallback finds nothing → None."""
+        mock_shopify_client.call_shopify = AsyncMock(side_effect=[
+            Exception("GraphQL timeout"),
+            {"products": [{"id": 99002, "variants": [{"sku": "AN3-12A"}]}]},
+        ])
+        orch = _make_orchestrator(mock_shopify_client, mock_shopify_inventory)
+
+        result = await orch.find_product_by_sku("NONEXISTENT")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_graphql_errors_field_triggers_rest_fallback(
+        self, mock_shopify_client, mock_shopify_inventory
+    ):
+        """GraphQL returns errors field → falls back to REST."""
+        mock_shopify_client.call_shopify = AsyncMock(side_effect=[
+            # GraphQL returns with errors
+            {"errors": [{"message": "Rate limited"}]},
+            # REST fallback
+            {"products": [{"id": 99003, "variants": [{"sku": "AN3-12A"}]}]},
+        ])
+        orch = _make_orchestrator(mock_shopify_client, mock_shopify_inventory)
+
+        result = await orch.find_product_by_sku("AN3-12A")
+        assert result == "99003"
 
 
 # ---------------------------------------------------------------------------

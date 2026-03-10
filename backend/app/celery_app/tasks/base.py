@@ -165,3 +165,70 @@ def get_image_store():
 def get_settings():
     """Get settings instance."""
     return get_dependencies()["settings"]
+
+
+# ============================================
+# Service factory helpers (lazy-loaded, worker-local)
+# ============================================
+
+def get_batch_completion_service():
+    """Get BatchCompletionService instance."""
+    from app.services.batch_completion_service import BatchCompletionService
+    return BatchCompletionService(
+        batch_store=get_batch_store(),
+        staging_store=get_staging_store(),
+    )
+
+
+def get_normalization_service():
+    """Get NormalizationService instance."""
+    from app.services.normalization_service import NormalizationService
+    return NormalizationService(
+        staging_store=get_staging_store(),
+        batch_store=get_batch_store(),
+        location_map=get_settings().shopify_location_map or {},
+    )
+
+
+def get_publishing_service():
+    """Get PublishingService instance."""
+    from app.services.publishing_service import PublishingService
+    from app.db.sync_store import get_sync_store
+    return PublishingService(
+        shopify=get_shopify_orchestrator(),
+        staging_store=get_staging_store(),
+        product_store=get_product_store(),
+        image_store=get_image_store(),
+        sync_store=get_sync_store(),
+        settings=get_settings(),
+    )
+
+
+def get_boeing_fetch_service():
+    """Get BoeingFetchService instance."""
+    from app.services.boeing_fetch_service import BoeingFetchService
+    from app.db.sync_store import get_sync_store
+    from app.utils.rate_limiter import get_boeing_rate_limiter
+    return BoeingFetchService(
+        boeing_client=get_boeing_client(),
+        sync_store=get_sync_store(),
+        rate_limiter=get_boeing_rate_limiter(),
+    )
+
+
+def get_shopify_update_service():
+    """Get ShopifyUpdateService instance."""
+    from app.services.shopify_update_service import ShopifyUpdateService
+    from app.db.sync_store import get_sync_store
+    return ShopifyUpdateService(
+        shopify=get_shopify_orchestrator(),
+        sync_store=get_sync_store(),
+        product_store=get_product_store(),
+    )
+
+
+def get_sync_dispatch_service():
+    """Get SyncDispatchService instance."""
+    from app.services.sync_dispatch_service import SyncDispatchService
+    from app.db.sync_store import get_sync_store
+    return SyncDispatchService(sync_store=get_sync_store())

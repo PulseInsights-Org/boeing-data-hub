@@ -1,14 +1,16 @@
 """
 Dispatch deduplication — Redis-based locks and SKU tracking for sync dispatch.
 
-Three mechanisms to prevent re-syncing and task flooding:
+Five mechanisms to prevent re-syncing and task flooding:
 
 1. Dispatch Idempotency Lock: Ensures only ONE dispatch_hourly per bucket window.
 2. SKU Dispatch Dedup Set: Tracks which SKUs were already dispatched in the window.
 3. Batch Idempotency Lock: Prevents two workers processing the same Boeing batch.
+4. Deferred Bucket Tracking: Records buckets skipped due to active extraction sessions.
+5. Catch-Up Lock: Ensures only ONE path (active or passive) processes deferred buckets.
 
 Redis connection follows the same pattern as cycle_tracker.py.
-Version: 1.0.0
+Version: 1.1.0
 """
 import hashlib
 import logging
@@ -149,3 +151,76 @@ def compute_window_start(sync_mode: Optional[str] = None) -> datetime:
         return now.replace(minute=floored_minute, second=0, microsecond=0)
     else:
         return now.replace(minute=0, second=0, microsecond=0)
+
+
+# ── 4. Deferred Bucket Tracking ──────────────────────────────────────────────
+
+_DEFERRED_SET_TTL = 86400  # 24 hours
+
+
+def record_deferred_bucket(bucket: int) -> None:
+    """Record a bucket as deferred due to an active extraction session.
+
+    Adds the bucket number to a Redis set keyed by today's date.
+    Called when dispatch_hourly skips a bucket because extraction is in progress.
+    """
+    r = _get_redis()
+    key = f"deferred_sync_buckets:{_today()}"
+    r.sadd(key, bucket)
+    r.expire(key, _DEFERRED_SET_TTL)
+    logger.info(f"Deferred bucket {bucket} recorded (extraction in progress)")
+
+
+def get_deferred_buckets() -> Set[int]:
+    """Get all bucket numbers deferred today.
+
+    Returns an empty set if no buckets have been deferred.
+    """
+    r = _get_redis()
+    key = f"deferred_sync_buckets:{_today()}"
+    members = r.smembers(key)
+    return {int(m) for m in members} if members else set()
+
+
+def clear_deferred_buckets() -> None:
+    """Clear all deferred buckets for today after catch-up completes."""
+    r = _get_redis()
+    key = f"deferred_sync_buckets:{_today()}"
+    r.delete(key)
+    logger.info("Deferred buckets cleared after catch-up")
+
+
+# ── 5. Catch-Up Lock ─────────────────────────────────────────────────────────
+
+_CATCHUP_LOCK_TTL = 300  # 5 minutes
+
+
+def acquire_catchup_lock(task_id: str = "unknown") -> bool:
+    """Acquire the catch-up lock to prevent duplicate deferred processing.
+
+    Shared between the active path (dispatch_deferred_catchup) and the
+    passive path (dispatch_hourly). Whichever acquires first processes
+    deferred buckets; the other skips.
+
+    Returns True if lock was acquired (this task should process deferred buckets).
+    Returns False if lock is already held (another task is processing them).
+    """
+    r = _get_redis()
+    key = f"deferred_catchup_lock:{_today()}"
+    acquired = r.set(key, task_id, nx=True, ex=_CATCHUP_LOCK_TTL)
+
+    if acquired:
+        logger.info(f"Catch-up lock ACQUIRED: task={task_id}")
+    else:
+        holder = r.get(key)
+        logger.info(f"Catch-up lock HELD by {holder}, skipping deferred processing")
+
+    return bool(acquired)
+
+
+def release_catchup_lock() -> None:
+    """Release the catch-up lock after deferred processing completes."""
+    r = _get_redis()
+    key = f"deferred_catchup_lock:{_today()}"
+    r.delete(key)
+    logger.debug("Catch-up lock released")
