@@ -36,7 +36,8 @@ EXPECTED_TASK_NAMES = [
     # Sync shopify tasks (2)
     "tasks.sync_shopify.update_shopify_product",
     "tasks.sync_shopify.sync_single_product_immediate",
-    # Report generation tasks (2)
+    # Report generation tasks (3)
+    "tasks.report_generation.send_cycle_start_notification",
     "tasks.report_generation.generate_cycle_report",
     "tasks.report_generation.wait_for_cycle_completion",
 ]

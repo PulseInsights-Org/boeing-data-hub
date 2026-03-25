@@ -20,8 +20,7 @@ from app.celery_app.celery_config import celery_app, SYNC_MODE, SYNC_TEST_BUCKET
 from app.celery_app.tasks.base import BaseTask, get_batch_store, get_sync_dispatch_service
 from app.celery_app.tasks.sync_boeing import process_boeing_batch
 from app.utils.schedule_helpers import get_current_hour_utc
-from app.utils.cycle_tracker import record_bucket_dispatched
-from app.celery_app.tasks.report_generation import wait_for_cycle_completion
+from app.utils.cycle_tracker import record_bucket_dispatched, record_cycle_start
 from app.utils.dispatch_lock import (
     acquire_dispatch_lock,
     release_dispatch_lock,
@@ -107,6 +106,16 @@ def dispatch_hourly(self):
     )
 
     try:
+        # ── Cycle start detection: notify stakeholders on first bucket ──
+        try:
+            is_first_bucket = record_cycle_start()
+            if is_first_bucket:
+                from app.celery_app.tasks.report_generation import send_cycle_start_notification
+                send_cycle_start_notification.delay()
+                logger.info("First bucket of cycle — cycle start notification queued")
+        except Exception as start_err:
+            logger.warning(f"Cycle start notification error (non-fatal): {start_err}")
+
         # ── Passive path: catch up deferred buckets (safety net) ──────
         deferred_buckets = get_deferred_buckets()
         deferred_stats = []
@@ -146,6 +155,7 @@ def dispatch_hourly(self):
         try:
             cycle_complete = record_bucket_dispatched(current_bucket)
             if cycle_complete:
+                from app.celery_app.tasks.report_generation import wait_for_cycle_completion
                 wait_for_cycle_completion.delay()
                 logger.info("Sync cycle complete — waiting for products to finish before report")
         except Exception as tracker_err:
@@ -235,6 +245,7 @@ def dispatch_deferred_catchup(self):
         )
 
         if cycle_complete:
+            from app.celery_app.tasks.report_generation import wait_for_cycle_completion
             wait_for_cycle_completion.delay()
             logger.info("Sync cycle complete after catch-up — triggering report")
 
