@@ -1,14 +1,18 @@
 """
-Cycle tracker — Redis-backed detection of sync cycle completion.
+Cycle tracker — Redis-backed detection of sync cycle lifecycle.
 
-Tracks which time buckets have been dispatched in the current cycle.
-When all buckets are dispatched, the cycle is marked complete and a
-report generation task can be triggered.
+Tracks the full lifecycle of a sync cycle: start, bucket dispatch
+progress, product changes, and completion.
 
 Cycle key format: sync_cycle:{YYYY-MM-DD}:{N}
   - N starts at 0 and increments each time a cycle completes within the same day.
 
-Version: 1.0.0
+Redis keys per cycle:
+  {cycle_key}            — Set of dispatched bucket numbers
+  {cycle_key}:started_at — ISO timestamp of first bucket dispatch
+  {cycle_key}:changes    — Hash of SKU → change reason
+
+Version: 1.1.0
 """
 import logging
 from datetime import datetime, timezone
@@ -44,6 +48,53 @@ def _get_cycle_key(r: redis.Redis) -> str:
         cycle_num = int(cycle_num)
 
     return f"sync_cycle:{today}:{cycle_num}"
+
+
+def record_cycle_start(
+    redis_url: str | None = None,
+) -> bool:
+    """Record the start of a new sync cycle (idempotent).
+
+    Called when the first bucket of a cycle is dispatched. Uses SETNX
+    so only the very first call within a cycle writes the timestamp.
+
+    Args:
+        redis_url: Optional Redis URL override.
+
+    Returns:
+        True if this call recorded the start (first bucket of cycle).
+        False if the cycle was already started (subsequent buckets).
+    """
+    r = _get_redis(redis_url)
+    cycle_key = _get_cycle_key(r)
+    started_key = f"{cycle_key}:started_at"
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # Atomic SET NX + EX to avoid phantom keys if process dies between ops
+    was_set = r.set(started_key, now_iso, nx=True, ex=CYCLE_TTL)
+
+    if was_set:
+        logger.info(f"Cycle started: {cycle_key} at {now_iso}")
+    return bool(was_set)
+
+
+def get_cycle_start_time(
+    cycle_id: str | None = None,
+    redis_url: str | None = None,
+) -> str | None:
+    """Get the start timestamp for a sync cycle.
+
+    Args:
+        cycle_id: Optional cycle key. If None, uses current cycle.
+        redis_url: Optional Redis URL override.
+
+    Returns:
+        ISO timestamp string, or None if cycle has not started.
+    """
+    r = _get_redis(redis_url)
+    key = cycle_id if cycle_id else _get_cycle_key(r)
+    started_key = f"{key}:started_at"
+    return r.get(started_key)
 
 
 def record_bucket_dispatched(

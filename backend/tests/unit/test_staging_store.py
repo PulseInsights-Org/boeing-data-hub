@@ -132,6 +132,56 @@ class TestUpsertProductStaging:
         assert row["vendor"] == "TestVendor"
         assert row["price"] == 25.50
 
+    @pytest.mark.asyncio
+    async def test_preserves_shopify_product_id_on_re_extraction(self, store, mock_supabase):
+        """Re-extraction should carry forward existing shopify_product_id."""
+        _, mock_table = mock_supabase
+
+        # Mock the in_ chain for the preservation query
+        mock_table.in_ = MagicMock(return_value=mock_table)
+        mock_table.execute.side_effect = [
+            # First execute: preservation SELECT returns existing record
+            MagicMock(data=[{"sku": "WF338109", "shopify_product_id": "99001"}]),
+            # Second execute: the upsert itself
+            MagicMock(data=[]),
+        ]
+
+        records = [{"sku": "WF338109", "title": "Re-extracted Part"}]
+        await store.upsert_product_staging(records)
+
+        upserted_rows = mock_table.upsert.call_args[0][0]
+        assert upserted_rows[0]["shopify_product_id"] == "99001"
+
+    @pytest.mark.asyncio
+    async def test_no_shopify_id_for_new_product(self, store, mock_supabase):
+        """New products without existing staging record should not get shopify_product_id."""
+        _, mock_table = mock_supabase
+
+        mock_table.in_ = MagicMock(return_value=mock_table)
+        mock_table.execute.side_effect = [
+            MagicMock(data=[]),   # preservation SELECT: no existing records
+            MagicMock(data=[]),   # upsert
+        ]
+
+        records = [{"sku": "NEW-PART-001", "title": "Brand New Part"}]
+        await store.upsert_product_staging(records)
+
+        upserted_rows = mock_table.upsert.call_args[0][0]
+        assert "shopify_product_id" not in upserted_rows[0]
+
+    @pytest.mark.asyncio
+    async def test_preserves_id_fail_open_on_db_error(self, store, mock_supabase):
+        """If preservation query fails, upsert should still proceed (fail-open)."""
+        _, mock_table = mock_supabase
+
+        mock_table.in_ = MagicMock(side_effect=Exception("DB connection lost"))
+
+        records = [{"sku": "WF338109", "title": "Part"}]
+        # Should NOT raise
+        await store.upsert_product_staging(records)
+
+        mock_table.upsert.assert_called_once()
+
 
 # --------------------------------------------------------------------------
 # get_product_staging_by_part_number

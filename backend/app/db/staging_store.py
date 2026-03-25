@@ -130,6 +130,36 @@ class StagingStore(BaseStore):
                 row_data["batch_id"] = batch_id
             db_rows.append(row_data)
 
+        # Preserve shopify_product_id from existing staging records.
+        # During re-extraction, the full-row upsert would otherwise clear
+        # shopify_product_id, breaking publish idempotency (Tier 1 check).
+        try:
+            skus = [r["sku"] for r in db_rows if r.get("sku")]
+            if skus:
+                existing = (
+                    self._client.table("product_staging")
+                    .select("sku, shopify_product_id")
+                    .eq("user_id", user_id)
+                    .in_("sku", skus)
+                    .execute()
+                )
+                existing_map = {
+                    row["sku"]: row["shopify_product_id"]
+                    for row in (existing.data or [])
+                    if row.get("shopify_product_id")
+                }
+                if existing_map:
+                    for row in db_rows:
+                        preserved_id = existing_map.get(row.get("sku"))
+                        if preserved_id:
+                            row["shopify_product_id"] = preserved_id
+                    logger.info(
+                        f"Preserved shopify_product_id for {len(existing_map)} "
+                        f"existing product(s) during re-extraction"
+                    )
+        except Exception as e:
+            logger.warning(f"Could not preserve shopify_product_id (fail-open): {e}")
+
         await self._upsert("product_staging", db_rows, on_conflict="user_id,sku")
 
     async def get_product_staging_by_part_number(
