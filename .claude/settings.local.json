@@ -19,7 +19,8 @@
       "Bash(move \"app\\\\services\\\\utils\\\\shopify_inventory.py\" \"app\\\\utils\\\\shopify_inventory.py\")",
       "Bash(move \"app\\\\services\\\\utils\\\\shopify_orchestrator.py\" \"app\\\\utils\\\\shopify_orchestrator.py\")",
       "Bash(move:*)",
-      "Bash(ssh:*)"
+      "Bash(ssh:*)",
+      "Bash(python *)"
     ]
   }
 }
