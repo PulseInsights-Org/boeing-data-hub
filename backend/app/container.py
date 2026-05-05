@@ -29,6 +29,7 @@ from app.clients.resend_client import ResendClient
 from app.services.extraction_service import ExtractionService
 from app.services.publishing_service import PublishingService
 from app.services.report_service import ReportService
+from app.services.staging_service import StagingService
 from app.db.report_store import ReportStore
 
 
@@ -117,6 +118,11 @@ def get_publishing_service():
         product_store=get_product_store(),
         image_store=get_image_store(),
     )
+
+
+@lru_cache(maxsize=1)
+def get_staging_service():
+    return StagingService(staging_store=get_staging_store())
 
 
 # -- Report Services -------------------------------------------------------

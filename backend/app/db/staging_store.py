@@ -162,6 +162,34 @@ class StagingStore(BaseStore):
 
         await self._upsert("product_staging", db_rows, on_conflict="user_id,sku")
 
+    async def upsert_by_id(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Row-level upsert into product_staging keyed on `id`.
+
+        Mirrors PostgREST `upsert(..., on_conflict='id')` semantics: updates
+        the row if `id` already exists, inserts otherwise. Returns the
+        affected row so the SPA can mirror it back to its local state.
+        """
+        try:
+            response = (
+                self._client.table("product_staging")
+                .upsert(record, on_conflict="id")
+                .execute()
+            )
+            rows = response.data or []
+            if not rows:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Supabase upsert returned no rows from product_staging",
+                )
+            return rows[0]
+        except APIError as e:
+            logger.info("supabase error table=product_staging detail=%s", str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Supabase upsert into product_staging failed: {e}",
+            )
+
     async def get_product_staging_by_part_number(
         self, part_number: str, user_id: str | None = None
     ) -> Dict[str, Any] | None:

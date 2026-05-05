@@ -105,3 +105,30 @@ class NormalizedProduct(BaseModel):
 
     shopify: Optional[ShopifyProductModel] = None
     user_id: Optional[str] = None
+
+
+class StagingProductUpsertRequest(BaseModel):
+    """Body for PUT /api/v1/products/staging/{product_id}."""
+
+    sku: Optional[str] = None
+    title: Optional[str] = None
+    body_html: Optional[str] = None
+    vendor: Optional[str] = None
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    inventory_quantity: Optional[int] = None
+    inventory_status: Optional[str] = None
+    weight: Optional[float] = None
+    weight_unit: Optional[str] = None
+    country_of_origin: Optional[str] = None
+    dim_length: Optional[float] = None
+    dim_width: Optional[float] = None
+    dim_height: Optional[float] = None
+    dim_uom: Optional[str] = None
+    status: Optional[str] = None
+
+
+class StagingProductStatusRequest(BaseModel):
+    """Body for PATCH /api/v1/products/staging/{product_id}/status."""
+
+    status: str
