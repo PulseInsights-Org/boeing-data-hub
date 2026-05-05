@@ -208,3 +208,112 @@ class TestPublishedProductDetail:
 
         response = client.get("/api/v1/products/published/nonexistent")
         assert response.status_code == 404
+
+
+class _FakeStagingService:
+    """In-memory stand-in for StagingService used by the integration tests."""
+
+    def __init__(self, upsert_response=None):
+        self.upsert_response = upsert_response or {}
+        self.upsert_calls = []
+        self.status_calls = []
+
+    async def upsert_product(self, product_id, payload, user_id):
+        self.upsert_calls.append(
+            {"product_id": product_id, "payload": payload, "user_id": user_id}
+        )
+        return self.upsert_response
+
+    async def update_status(self, product_id, status, user_id):
+        self.status_calls.append(
+            {"product_id": product_id, "status": status, "user_id": user_id}
+        )
+
+
+@pytest.mark.integration
+class TestStagingProductUpsert:
+    """Tests for PUT /api/v1/products/staging/{product_id}."""
+
+    def test_upsert_returns_product(self, client):
+        """Should return the upserted row from the service layer."""
+        from app.container import get_staging_service
+        from app.main import app
+
+        upserted = {
+            "id": "prod-001",
+            "sku": "WF338109",
+            "title": "Updated title",
+            "user_id": "test-user-id",
+            "status": "enriched",
+        }
+        fake = _FakeStagingService(upsert_response=upserted)
+        app.dependency_overrides[get_staging_service] = lambda: fake
+        try:
+            response = client.put(
+                "/api/v1/products/staging/prod-001",
+                json={
+                    "sku": "WF338109",
+                    "title": "Updated title",
+                    "status": "enriched",
+                },
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["product"]["id"] == "prod-001"
+            assert data["product"]["title"] == "Updated title"
+
+            assert len(fake.upsert_calls) == 1
+            call = fake.upsert_calls[0]
+            assert call["product_id"] == "prod-001"
+            assert call["user_id"] == "test-user-id"
+            assert call["payload"]["sku"] == "WF338109"
+            assert call["payload"]["title"] == "Updated title"
+            assert call["payload"]["status"] == "enriched"
+        finally:
+            app.dependency_overrides.pop(get_staging_service, None)
+
+    def test_upsert_requires_auth(self, unauthenticated_client):
+        """Upsert without auth should return 401 or 403."""
+        response = unauthenticated_client.put(
+            "/api/v1/products/staging/prod-001",
+            json={"sku": "WF338109"},
+        )
+        assert response.status_code in (401, 403)
+
+
+@pytest.mark.integration
+class TestStagingProductStatus:
+    """Tests for PATCH /api/v1/products/staging/{product_id}/status."""
+
+    def test_status_update_succeeds(self, client):
+        """Should call the service with the right args and return success."""
+        from app.container import get_staging_service
+        from app.main import app
+
+        fake = _FakeStagingService()
+        app.dependency_overrides[get_staging_service] = lambda: fake
+        try:
+            response = client.patch(
+                "/api/v1/products/staging/prod-001/status",
+                json={"status": "published"},
+            )
+            assert response.status_code == 200
+            assert response.json() == {"success": True}
+            assert fake.status_calls == [
+                {
+                    "product_id": "prod-001",
+                    "status": "published",
+                    "user_id": "test-user-id",
+                }
+            ]
+        finally:
+            app.dependency_overrides.pop(get_staging_service, None)
+
+    def test_status_update_requires_auth(self, unauthenticated_client):
+        """Status update without auth should return 401 or 403."""
+        response = unauthenticated_client.patch(
+            "/api/v1/products/staging/prod-001/status",
+            json={"status": "published"},
+        )
+        assert response.status_code in (401, 403)

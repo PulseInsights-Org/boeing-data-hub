@@ -18,8 +18,14 @@ from pydantic import BaseModel
 
 from supabase import create_client
 
+from app.container import get_staging_service
 from app.core.auth import get_current_user
 from app.core.config import settings
+from app.schemas.products import (
+    StagingProductStatusRequest,
+    StagingProductUpsertRequest,
+)
+from app.services.staging_service import StagingService
 
 logger = logging.getLogger(__name__)
 
@@ -303,3 +309,36 @@ async def get_raw_boeing_data(
     except Exception as e:
         logger.error(f"Failed to fetch raw Boeing data for {part_number}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch raw data: {e}")
+
+
+@router.put("/staging/{product_id}")
+async def upsert_staging_product(
+    product_id: str,
+    body: StagingProductUpsertRequest,
+    current_user: dict = Depends(get_current_user),
+    service: StagingService = Depends(get_staging_service),
+):
+    """Row-level upsert into product_staging keyed on `id` (SPA edit flow)."""
+    payload = body.model_dump(exclude_none=True)
+    row = await service.upsert_product(
+        product_id=product_id,
+        payload=payload,
+        user_id=current_user["user_id"],
+    )
+    return {"success": True, "product": row}
+
+
+@router.patch("/staging/{product_id}/status")
+async def update_staging_product_status(
+    product_id: str,
+    body: StagingProductStatusRequest,
+    current_user: dict = Depends(get_current_user),
+    service: StagingService = Depends(get_staging_service),
+):
+    """Update the lifecycle status of a single product_staging row."""
+    await service.update_status(
+        product_id=product_id,
+        status=body.status,
+        user_id=current_user["user_id"],
+    )
+    return {"success": True}

@@ -9,6 +9,7 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { NormalizedProduct } from '@/types/product';
+import { getAuthHeaders } from '@/services/authService';
 
 // Supabase configuration from Vite env (frontend-safe keys)
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -24,22 +25,26 @@ const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Table names aligned with agreed schema
 const SUPABASE_TABLE_STAGING = 'product_staging';
 
+// Base URL for backend API (FastAPI). Configure via Vite env.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+
 /**
- * Store or update normalized product data
- * Called after editing or enriching products
+ * Store or update normalized product data via FastAPI.
+ * Called after editing or enriching products.
+ *
+ * Server-controlled fields (id, user_id, updated_at) are set by the backend;
+ * we only send the editable column shape.
  */
 export const saveNormalizedProduct = async (product: NormalizedProduct): Promise<void> => {
   console.log(`[SupabaseService] Saving normalized product (Shopify-friendly): ${product.partNumber}`);
 
-  const now = new Date().toISOString();
-
   const sku = product.partNumber || product.aviall_part_number || product.sku || '';
+  const productId = product.id || sku;
   const title = product.title || product.name || sku;
   const bodyHtml = product.description || '';
   const vendor = product.manufacturer || product.supplier_name || product.distrSrc || '';
 
-  const upsertPayload = {
-    id: product.id || sku,
+  const body = {
     sku,
     title,
     body_html: bodyHtml,
@@ -56,16 +61,27 @@ export const saveNormalizedProduct = async (product: NormalizedProduct): Promise
     dim_height: product.height ?? product.dim_height ?? null,
     dim_uom: product.dimensionUom || product.dim_uom || '',
     status: product.status,
-    updated_at: now,
   };
 
-  const { error } = await supabase.from(SUPABASE_TABLE_STAGING).upsert(upsertPayload, {
-    onConflict: 'id',
+  const url = new URL(
+    `/api/v1/products/staging/${encodeURIComponent(productId)}`,
+    API_BASE_URL || window.location.origin
+  );
+
+  const response = await fetch(url.toString(), {
+    method: 'PUT',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(body),
   });
 
-  if (error) {
-    console.error('[SupabaseService] Error saving normalized product', error);
-    throw error;
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    console.error('[SupabaseService] Error saving normalized product', response.status, errorText);
+    throw new Error(`Save normalized product failed: ${response.status} ${errorText}`);
   }
 };
 
@@ -119,23 +135,32 @@ export const fetchNormalizedProducts = async (): Promise<NormalizedProduct[]> =>
 };
 
 /**
- * Update product status after publishing
+ * Update product status after publishing via FastAPI.
  */
 export const updateProductStatus = async (
-  productId: string, 
+  productId: string,
   status: 'fetched' | 'enriched' | 'published'
 ): Promise<void> => {
   console.log(`[SupabaseService] Updating product ${productId} status to: ${status}`);
 
-  const now = new Date().toISOString();
+  const url = new URL(
+    `/api/v1/products/staging/${encodeURIComponent(productId)}/status`,
+    API_BASE_URL || window.location.origin
+  );
 
-  const { error } = await supabase
-    .from(SUPABASE_TABLE_STAGING)
-    .update({ status, updated_at: now })
-    .eq('id', productId);
+  const response = await fetch(url.toString(), {
+    method: 'PATCH',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ status }),
+  });
 
-  if (error) {
-    console.error('[SupabaseService] Error updating product status', error);
-    throw error;
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    console.error('[SupabaseService] Error updating product status', response.status, errorText);
+    throw new Error(`Update product status failed: ${response.status} ${errorText}`);
   }
 };

@@ -1,0 +1,175 @@
+============================================================
+  FIX & VERIFY REPORT
+  Mar 26, 2026 — 14:51 UTC
+============================================================
+
+  Shopify fixed:     77
+  DB verified OK:    78
+  DB mismatches:     1 (corrected)
+  Failed:            2
+  Duration:          26m 27s
+
+DB CORRECTIONS
+------------------------------------------------------------
+  4066-0074-1=E4            hash: a4ffd0f7c84c71c3 != c9fabfa26be4b933; price: 1964.66 != 1944.64; qty: 4 != 11
+
+FAILURES
+------------------------------------------------------------
+  727734-1=9B               Not found in Shopify: 727734-1
+  4066-0074-1=E4            Not found in Shopify: 4066-0074-1
+
+============================================================
+
+============================================================
+  FIX & VERIFY — Boeing-authoritative repair
+============================================================
+
+  Products to fix & verify: 79
+  Boeing API batches:       8
+  Location map entries:     10
+
+  Shopify locations: ['Atlanta', 'Chicago', 'Dallas', 'Los Angeles', 'Miami', 'New York', 'Phoenix', 'Skynet Seattle', 'Vendor SEA', 'Vertex Aviation Pvt Ltd']
+
+  [Batch 1/8] Fetching 10 SKUs from Boeing...
+    FIXED    RS900BM211=9B: 2 locations mapped | DB OK
+    FIXED    4232-0226-1=9B: 1 locations mapped | DB OK
+    FIXED    RS903J5-142=9B: 1 locations mapped | DB OK
+    FIXED    2D2023-7=E9: 2 locations mapped | DB OK
+    FIXED    4115-0006-1=9B: 1 locations mapped | DB OK
+    FIXED    5021-5CPMA=E9: 1 locations mapped | DB OK
+    FIXED    P1022=K3: 1 locations mapped | DB OK
+    FIXED    P621888=K3: 1 locations mapped | DB OK
+    FIXED    1C3015-1=E9: 1 locations mapped | DB OK
+    FIXED    2D2025-13=E9: 1 locations mapped | DB OK
+    Waiting 30s...
+  [Batch 2/8] Fetching 10 SKUs from Boeing...
+    FIXED    RS1157-1=9B: 3 locations mapped | DB OK
+    FIXED    0016BM001612B60=9B: 1 locations mapped | DB OK
+    FIXED    P10-5304=K3: 1 locations mapped | DB OK
+    FIXED    WF336732=K3: 1 locations mapped | DB OK
+    FIXED    727741=9B: 1 locations mapped | DB OK
+    FIXED    2D2025-12=E9: 1 locations mapped | DB OK
+    FIXED    402K200-2=K3: 2 locations mapped | DB OK
+    FIXED    2D3017-1=E9: 1 locations mapped | DB OK
+    FIXED    2D2015-1=E9: 1 locations mapped | DB OK
+    FIXED    2048-0031-2=9B: 2 locations mapped | DB OK
+    Waiting 30s...
+  [Batch 3/8] Fetching 10 SKUs from Boeing...
+    FIXED    2011-0012-2=9B: 1 locations mapped | DB OK
+    FIXED    SAM222-18=E9: 1 locations mapped | DB OK
+    FIXED    42400-118=E9: 1 locations mapped | DB OK
+    FIXED    RS900BS015=9B: 2 locations mapped | DB OK
+    FIXED    2D2019-5=E9: 1 locations mapped | DB OK
+    FIXED    2D7009-3=E9: 1 locations mapped | DB OK
+    FIXED    P621895=K3: 3 locations mapped | DB OK
+    FIXED    2084-0057=9B: 1 locations mapped | DB OK
+    FIXED    A70027-3APA=E9: 1 locations mapped | DB OK
+    FIXED    A70027-1APA=E9: 1 locations mapped | DB OK
+    Waiting 30s...
+  [Batch 4/8] Fetching 10 SKUs from Boeing...
+    FIXED    RS900J016=9B: 2 locations mapped | DB OK
+    FIXED    4090-0034-60=9B: 1 locations mapped | DB OK
+    FIXED    0019-0005-8=9B: 1 locations mapped | DB OK
+    FIXED    2048-0031-3=9B: 1 locations mapped | DB OK
+    FIXED    727733-3=9B: 1 locations mapped | DB OK
+    FIXED    1C7004-11ABE=E9: 1 locations mapped | DB OK
+    FIXED    2D3015-1=E9: 1 locations mapped | DB OK
+    FIXED    2100002-01-277=E9: 1 locations mapped | DB OK
+    FIXED    WF335193=K3: 1 locations mapped | DB OK
+    FIXED    2D1049-1AHY=E9: 1 locations mapped | DB OK
+    Waiting 30s...
+  [Batch 5/8] Fetching 10 SKUs from Boeing...
+    FIXED    G030018=K3: 1 locations mapped | DB OK
+    FIXED    2100002-01-276=E9: 2 locations mapped | DB OK
+    FIXED    P10-7172=K3: 2 locations mapped | DB OK
+    FIXED    P12-2322=K3: 1 locations mapped | DB OK
+    FIXED    P10-8421=K3: 2 locations mapped | DB OK
+    FIXED    P617053=K3: 2 locations mapped | DB OK
+    FIXED    P510445=K3: 1 locations mapped | DB OK
+    FIXED    1C7003-41ABE=E9: 1 locations mapped | DB OK
+    FIXED    P1121=K3: 2 locations mapped | DB OK
+    NOT FOUND  727734-1=9B (727734-1)
+    Waiting 30s...
+  [Batch 6/8] Fetching 10 SKUs from Boeing...
+    FIXED    WF337192=K3: 1 locations mapped | DB OK
+    FIXED    P197783=K3: 1 locations mapped | DB OK
+    FIXED    P10-7210=K3: 2 locations mapped | DB OK
+    FIXED    P13-6739=K3: 1 locations mapped | DB OK
+    FIXED    P512777=K3: 4 locations mapped | DB OK
+    FIXED    WF337424=K3: 1 locations mapped | DB OK
+    FIXED    4177-0169-324=9B: 1 locations mapped | DB OK
+    FIXED    WF335192=K3: 1 locations mapped | DB OK
+    FIXED    4177-0146-38=9B: 1 locations mapped | DB OK
+    FIXED    1400J8A1=9B: 1 locations mapped | DB OK
+    Waiting 30s...
+  [Batch 7/8] Fetching 10 SKUs from Boeing...
+    FIXED    WF344855=K3: 1 locations mapped | DB OK
+    FIXED    2100002-01-231=E9: 1 locations mapped | DB OK
+    FIXED    WF338109=K3: 1 locations mapped | DB OK
+    FIXED    SAM222-19=E9: 1 locations mapped | DB OK
+    FIXED    WF329398=K3: 2 locations mapped | DB OK
+    FIXED    P198290=K3: 3 locations mapped | DB OK
+    FIXED    0185-0016-1=9B: 2 locations mapped | DB OK
+    FIXED    2D1025-1=E9: 1 locations mapped | DB OK
+    FIXED    S70030-1AMJ=E9: 1 locations mapped | DB OK
+    FIXED    WF334786=K3: 1 locations mapped | DB OK
+    Waiting 30s...
+  [Batch 8/8] Fetching 9 SKUs from Boeing...
+    FIXED    P642387=K3: 1 locations mapped | DB OK
+    FIXED    P617649=K3: 1 locations mapped | DB OK
+    NOT FOUND  4066-0074-1=E4 (4066-0074-1)
+    FIXED    FI0486=K3: 1 locations mapped | DB OK
+    FIXED    P608440=K3: 1 locations mapped | DB OK
+    FIXED    P641425=K3: 1 locations mapped | DB OK
+    FIXED    WF344862=K3: 2 locations mapped | DB OK
+    FIXED    P1097=K3: 1 locations mapped | DB OK
+    FIXED    P510547=K3: 1 locations mapped | DB OK
+
+    FIXED    2D1025-1=E9: 1 locations mapped | DB OK
+    FIXED    S70030-1AMJ=E9: 1 locations mapped | DB OK
+    FIXED    WF334786=K3: 1 locations mapped | DB OK
+    Waiting 30s...
+  [Batch 8/8] Fetching 9 SKUs from Boeing...
+    FIXED    P642387=K3: 1 locations mapped | DB OK
+    FIXED    P617649=K3: 1 locations mapped | DB OK
+    NOT FOUND  4066-0074-1=E4 (4066-0074-1)
+    FIXED    FI0486=K3: 1 locations mapped | DB OK
+    FIXED    P608440=K3: 1 locations mapped | DB OK
+    FIXED    P641425=K3: 1 locations mapped | DB OK
+    FIXED    WF344862=K3: 2 locations mapped | DB OK
+    FIXED    P1097=K3: 1 locations mapped | DB OK
+    FIXED    P510547=K3: 1 locations mapped | DB OK
+
+    FIXED    P642387=K3: 1 locations mapped | DB OK
+    FIXED    P617649=K3: 1 locations mapped | DB OK
+    NOT FOUND  4066-0074-1=E4 (4066-0074-1)
+    FIXED    FI0486=K3: 1 locations mapped | DB OK
+    FIXED    P608440=K3: 1 locations mapped | DB OK
+    FIXED    P641425=K3: 1 locations mapped | DB OK
+    FIXED    WF344862=K3: 2 locations mapped | DB OK
+    FIXED    P1097=K3: 1 locations mapped | DB OK
+    FIXED    P510547=K3: 1 locations mapped | DB OK
+
+    FIXED    WF344862=K3: 2 locations mapped | DB OK
+    FIXED    P1097=K3: 1 locations mapped | DB OK
+    FIXED    P510547=K3: 1 locations mapped | DB OK
+
+============================================================
+  FIX & VERIFY COMPLETE — 26m 27s
+============================================================
+  Shopify fixed:     77
+  DB verified OK:    78
+  DB mismatches:     1 (auto-corrected)
+  DB mismatches:     1 (auto-corrected)
+  Failed:            2
+
+  DB corrections:
+    4066-0074-1=E4: hash: a4ffd0f7c84c71c3 != c9fabfa26be4b933; price: 1964.66 != 1944.64; qty: 4 != 11
+
+  Failures:
+    727734-1=9B: Not found in Shopify: 727734-1
+    4066-0074-1=E4: Not found in Shopify: 4066-0074-1
+
+  Report saved: C:\Users\91948\Desktop\SkynetParts - Projects\boeing-data-hub\backend\scripts\reports\fix_verify_2026-03-26_145125.txt
+
+====================================================================
