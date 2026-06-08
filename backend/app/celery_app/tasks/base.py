@@ -224,6 +224,7 @@ def get_shopify_update_service():
         shopify=get_shopify_orchestrator(),
         sync_store=get_sync_store(),
         product_store=get_product_store(),
+        staging_store=get_staging_store(),
     )
 
 

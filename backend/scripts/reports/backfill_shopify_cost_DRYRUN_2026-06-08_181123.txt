@@ -1,0 +1,865 @@
+======================================================================
+  SHOPIFY COST BACKFILL REPORT  --  DRYRUN
+  Jun 08, 2026 — 12:41 UTC
+======================================================================
+
+SUMMARY
+----------------------------------------
+  Total SKUs:           79
+  Would Update:         79
+  No Boeing Price:      0
+  Missing from Boeing:  0
+  Boeing Batch Errors:  0
+  Duration:             4m 19s
+  Mode:                 DRYRUN  (no Shopify or DB writes)
+
+PLANNED UPDATES (79)
+----------------------------------------------------------------------
+  SKU                             planned cost  
+  ----------------------------  ------------
+  0016BM001612B60=9B              975.57
+  0019-0005-8=9B                  47.39
+  0185-0016-1=9B                  1861.95
+  1400J8A1=9B                     56.70
+  1C3015-1=E9                     307.16
+  1C7003-41ABE=E9                 1169.05
+  1C7004-11ABE=E9                 536.11
+  2011-0012-2=9B                  183.29
+  2048-0031-2=9B                  45.37
+  2048-0031-3=9B                  89.75
+  2084-0057=9B                    209.46
+  2100002-01-231=E9               2677.28
+  2100002-01-276=E9               1343.91
+  2100002-01-277=E9               1658.20
+  2D1025-1=E9                     338.51
+  2D1049-1AHY=E9                  69.48
+  2D2015-1=E9                     115.74
+  2D2019-5=E9                     505.13
+  2D2023-7=E9                     132.23
+  2D2025-12=E9                    202.26
+  2D2025-13=E9                    135.98
+  2D3015-1=E9                     38.36
+  2D3017-1=E9                     28.45
+  2D7009-3=E9                     241.94
+  402K200-2=K3                    8393.45
+  4066-0074-1=E4                  1944.64
+  4090-0034-60=9B                 511.52
+  4115-0006-1=9B                  9.99
+  4177-0146-38=9B                 257.65
+  4177-0169-324=9B                58.10
+  4232-0226-1=9B                  442.61
+  42400-118=E9                    41.66
+  5021-5CPMA=E9                   310.01
+  727733-3=9B                     753.09
+  727734-1=9B                     1650.35
+  727741=9B                       134.18
+  A70027-1APA=E9                  96.33
+  A70027-3APA=E9                  120.40
+  FI0486=K3                       38.88
+  G030018=K3                      3.31
+  P10-5304=K3                     211.89
+  P10-7172=K3                     168.04
+  P10-7210=K3                     244.83
+  P10-8421=K3                     169.56
+  P1022=K3                        99.86
+  P1097=K3                        103.99
+  P1121=K3                        122.99
+  P12-2322=K3                     147.50
+  P13-6739=K3                     404.03
+  P197783=K3                      227.02
+  P198290=K3                      171.73
+  P510445=K3                      331.76
+  P510547=K3                      132.15
+  P512777=K3                      430.01
+  P608440=K3                      811.17
+  P617053=K3                      113.19
+  P617649=K3                      1745.97
+  P621888=K3                      316.26
+  P621895=K3                      312.26
+  P641425=K3                      997.38
+  P642387=K3                      957.13
+  RS1157-1=9B                     197.57
+  RS900BM211=9B                   56.52
+  RS900BS015=9B                   146.75
+  RS900J016=9B                    242.16
+  RS903J5-142=9B                  272.85
+  S70030-1AMJ=E9                  60.29
+  SAM222-18=E9                    815.76
+  SAM222-19=E9                    800.00
+  WF329398=K3                     102.87
+  WF334786=K3                     276.34
+  WF335192=K3                     406.34
+  WF335193=K3                     279.30
+  WF336732=K3                     159.69
+  WF337192=K3                     470.60
+  WF337424=K3                     79.33
+  WF338109=K3                     155.39
+  WF344855=K3                     575.87
+  WF344862=K3                     765.19
+
+======================================================================
+  BOEING RAW SNAPSHOT (audit appendix)
+  Jun 08, 2026 — 12:41 UTC
+  Total SKUs: 79   Batches: 8
+
+--- Batch 1/8 -----------------------------
+SKU: RS900BM211=9B
+  listPrice:           56.52
+  netPrice:            56.52
+  chosen for cost:     56.52
+  quantity:            16
+  inStock:             True
+  locations:
+      - Dallas Central: 7
+      - Miami, FL: 9
+
+SKU: 4232-0226-1=9B
+  listPrice:           0
+  netPrice:            442.61
+  chosen for cost:     442.61
+  quantity:            8
+  inStock:             True
+  locations:
+      - Dallas Central: 8
+
+SKU: RS903J5-142=9B
+  listPrice:           272.85
+  netPrice:            272.85
+  chosen for cost:     272.85
+  quantity:            0
+  inStock:             False
+  locations:
+      (none)
+
+SKU: 2D2023-7=E9
+  listPrice:           132.23
+  netPrice:            132.23
+  chosen for cost:     132.23
+  quantity:            247
+  inStock:             True
+  locations:
+      - Dallas Central: 243
+      - Miami, FL: 4
+
+SKU: 4115-0006-1=9B
+  listPrice:           0
+  netPrice:            9.99
+  chosen for cost:     9.99
+  quantity:            21
+  inStock:             True
+  locations:
+      - Dallas Central: 21
+
+SKU: 5021-5CPMA=E9
+  listPrice:           0
+  netPrice:            310.01
+  chosen for cost:     310.01
+  quantity:            30
+  inStock:             True
+  locations:
+      - Dallas Central: 30
+
+SKU: P1022=K3
+  listPrice:           99.86
+  netPrice:            88.49
+  chosen for cost:     99.86
+  quantity:            0
+  inStock:             False
+  locations:
+      (none)
+
+SKU: P621888=K3
+  listPrice:           316.26
+  netPrice:            316.26
+  chosen for cost:     316.26
+  quantity:            47
+  inStock:             True
+  locations:
+      - Dallas Central: 36
+      - Germany CSC: 11
+
+SKU: 1C3015-1=E9
+  listPrice:           307.16
+  netPrice:            307.16
+  chosen for cost:     307.16
+  quantity:            10
+  inStock:             True
+  locations:
+      - Dallas Central: 10
+
+SKU: 2D2025-13=E9
+  listPrice:           135.98
+  netPrice:            135.98
+  chosen for cost:     135.98
+  quantity:            121
+  inStock:             True
+  locations:
+      - Dallas Central: 121
+
+--- Batch 2/8 -----------------------------
+SKU: RS1157-1=9B
+  listPrice:           197.57
+  netPrice:            197.57
+  chosen for cost:     197.57
+  quantity:            31
+  inStock:             True
+  locations:
+      - Dallas Central: 14
+      - Miami, FL: 8
+      - Chicago, IL: 3
+      - Germany CSC: 6
+
+SKU: 0016BM001612B60=9B
+  listPrice:           975.57
+  netPrice:            975.57
+  chosen for cost:     975.57
+  quantity:            126
+  inStock:             True
+  locations:
+      - Dallas Central: 126
+
+SKU: P10-5304=K3
+  listPrice:           211.89
+  netPrice:            187.76
+  chosen for cost:     211.89
+  quantity:            3
+  inStock:             True
+  locations:
+      - Dallas Central: 1
+      - Germany CSC: 2
+
+SKU: WF336732=K3
+  listPrice:           159.69
+  netPrice:            159.69
+  chosen for cost:     159.69
+  quantity:            70
+  inStock:             True
+  locations:
+      - Dallas Central: 70
+
+SKU: 727741=9B
+  listPrice:           134.18
+  netPrice:            134.18
+  chosen for cost:     134.18
+  quantity:            257
+  inStock:             True
+  locations:
+      - Goodyear AZ: 257
+
+SKU: 2D2025-12=E9
+  listPrice:           202.26
+  netPrice:            202.26
+  chosen for cost:     202.26
+  quantity:            445
+  inStock:             True
+  locations:
+      - Dallas Central: 445
+
+SKU: 402K200-2=K3
+  listPrice:           8393.45
+  netPrice:            8393.45
+  chosen for cost:     8393.45
+  quantity:            9
+  inStock:             True
+  locations:
+      - Dallas Central: 5
+      - Miami, FL: 2
+      - Germany CSC: 2
+
+SKU: 2D3017-1=E9
+  listPrice:           28.45
+  netPrice:            28.45
+  chosen for cost:     28.45
+  quantity:            305
+  inStock:             True
+  locations:
+      - Dallas Central: 305
+
+SKU: 2D2015-1=E9
+  listPrice:           115.74
+  netPrice:            115.74
+  chosen for cost:     115.74
+  quantity:            101
+  inStock:             True
+  locations:
+      - Dallas Central: 101
+
+SKU: 2D2019-5=E9
+  listPrice:           505.13
+  netPrice:            505.13
+  chosen for cost:     505.13
+  quantity:            167
+  inStock:             True
+  locations:
+      - Dallas Central: 167
+
+--- Batch 3/8 -----------------------------
+SKU: A70027-1APA=E9
+  listPrice:           96.33
+  netPrice:            96.33
+  chosen for cost:     96.33
+  quantity:            74
+  inStock:             True
+  locations:
+      - Dallas Central: 74
+
+SKU: 2048-0031-2=9B
+  listPrice:           45.37
+  netPrice:            45.37
+  chosen for cost:     45.37
+  quantity:            150
+  inStock:             True
+  locations:
+      - Dallas Central: 107
+      - Miami, FL: 43
+
+SKU: 2011-0012-2=9B
+  listPrice:           0
+  netPrice:            183.29
+  chosen for cost:     183.29
+  quantity:            46
+  inStock:             True
+  locations:
+      - Dallas Central: 46
+
+SKU: SAM222-18=E9
+  listPrice:           815.76
+  netPrice:            815.76
+  chosen for cost:     815.76
+  quantity:            1
+  inStock:             True
+  locations:
+      - Dallas Central: 1
+
+SKU: 42400-118=E9
+  listPrice:           0
+  netPrice:            41.66
+  chosen for cost:     41.66
+  quantity:            6
+  inStock:             True
+  locations:
+      - Dallas Central: 6
+
+SKU: RS900BS015=9B
+  listPrice:           146.75
+  netPrice:            146.75
+  chosen for cost:     146.75
+  quantity:            86
+  inStock:             True
+  locations:
+      - Dallas Central: 83
+      - Los Angeles, CA: 3
+
+SKU: 2D7009-3=E9
+  listPrice:           241.94
+  netPrice:            241.94
+  chosen for cost:     241.94
+  quantity:            357
+  inStock:             True
+  locations:
+      - Dallas Central: 357
+
+SKU: P621895=K3
+  listPrice:           312.26
+  netPrice:            312.26
+  chosen for cost:     312.26
+  quantity:            232
+  inStock:             True
+  locations:
+      - Dallas Central: 166
+      - Miami, FL: 63
+      - New York, NY: 1
+      - Germany CSC: 2
+
+SKU: 2084-0057=9B
+  listPrice:           209.46
+  netPrice:            209.46
+  chosen for cost:     209.46
+  quantity:            62
+  inStock:             True
+  locations:
+      - Dallas Central: 62
+
+SKU: 4090-0034-60=9B
+  listPrice:           0
+  netPrice:            511.52
+  chosen for cost:     511.52
+  quantity:            1
+  inStock:             True
+  locations:
+      - Los Angeles, CA: 1
+
+--- Batch 4/8 -----------------------------
+SKU: A70027-3APA=E9
+  listPrice:           120.4
+  netPrice:            120.4
+  chosen for cost:     120.4
+  quantity:            28
+  inStock:             True
+  locations:
+      - Dallas Central: 28
+
+SKU: RS900J016=9B
+  listPrice:           242.16
+  netPrice:            242.16
+  chosen for cost:     242.16
+  quantity:            134
+  inStock:             True
+  locations:
+      - Dallas Central: 121
+      - Los Angeles, CA: 8
+      - Germany CSC: 5
+
+SKU: 0019-0005-8=9B
+  listPrice:           0
+  netPrice:            47.39
+  chosen for cost:     47.39
+  quantity:            40
+  inStock:             True
+  locations:
+      - Dallas Central: 40
+
+SKU: 2048-0031-3=9B
+  listPrice:           89.75
+  netPrice:            89.75
+  chosen for cost:     89.75
+  quantity:            351
+  inStock:             True
+  locations:
+      - Dallas Central: 351
+
+SKU: 727733-3=9B
+  listPrice:           753.09
+  netPrice:            753.09
+  chosen for cost:     753.09
+  quantity:            21
+  inStock:             True
+  locations:
+      - Dallas Central: 17
+      - Germany CSC: 4
+
+SKU: P10-8421=K3
+  listPrice:           169.56
+  netPrice:            150.25
+  chosen for cost:     169.56
+  quantity:            18
+  inStock:             True
+  locations:
+      - Dallas Central: 17
+      - Miami, FL: 1
+
+SKU: P512777=K3
+  listPrice:           430.01
+  netPrice:            430.01
+  chosen for cost:     430.01
+  quantity:            557
+  inStock:             True
+  locations:
+      - Dallas Central: 463
+      - Miami, FL: 10
+      - Goodyear AZ: 11
+      - New York, NY: 6
+      - Los Angeles, CA: 14
+      - Germany CSC: 53
+
+SKU: 1C7004-11ABE=E9
+  listPrice:           536.11
+  netPrice:            536.11
+  chosen for cost:     536.11
+  quantity:            25
+  inStock:             True
+  locations:
+      - Dallas Central: 25
+
+SKU: 2D3015-1=E9
+  listPrice:           38.36
+  netPrice:            38.36
+  chosen for cost:     38.36
+  quantity:            286
+  inStock:             True
+  locations:
+      - Dallas Central: 286
+
+SKU: 2100002-01-277=E9
+  listPrice:           1658.2
+  netPrice:            1658.2
+  chosen for cost:     1658.2
+  quantity:            256
+  inStock:             True
+  locations:
+      - Dallas Central: 256
+
+--- Batch 5/8 -----------------------------
+SKU: WF335193=K3
+  listPrice:           279.3
+  netPrice:            247.49
+  chosen for cost:     279.3
+  quantity:            0
+  inStock:             False
+  locations:
+      (none)
+
+SKU: 2D1049-1AHY=E9
+  listPrice:           0
+  netPrice:            69.48
+  chosen for cost:     69.48
+  quantity:            4
+  inStock:             True
+  locations:
+      - Dallas Central: 4
+
+SKU: G030018=K3
+  listPrice:           3.31
+  netPrice:            3.31
+  chosen for cost:     3.31
+  quantity:            279
+  inStock:             True
+  locations:
+      - Dallas Central: 279
+
+SKU: 2100002-01-276=E9
+  listPrice:           1343.91
+  netPrice:            1343.91
+  chosen for cost:     1343.91
+  quantity:            18
+  inStock:             True
+  locations:
+      - Dallas Central: 17
+      - Los Angeles, CA: 1
+
+SKU: P10-7172=K3
+  listPrice:           168.04
+  netPrice:            148.9
+  chosen for cost:     168.04
+  quantity:            35
+  inStock:             True
+  locations:
+      - Dallas Central: 25
+      - Miami, FL: 4
+      - Germany CSC: 6
+
+SKU: P12-2322=K3
+  listPrice:           147.5
+  netPrice:            130.7
+  chosen for cost:     147.5
+  quantity:            27
+  inStock:             True
+  locations:
+      - Dallas Central: 27
+
+SKU: P617053=K3
+  listPrice:           113.19
+  netPrice:            100.3
+  chosen for cost:     113.19
+  quantity:            166
+  inStock:             True
+  locations:
+      - Dallas Central: 165
+      - Chicago, IL: 1
+
+SKU: P510445=K3
+  listPrice:           331.76
+  netPrice:            331.76
+  chosen for cost:     331.76
+  quantity:            225
+  inStock:             True
+  locations:
+      - Dallas Central: 186
+      - Germany CSC: 39
+
+SKU: 1C7003-41ABE=E9
+  listPrice:           1169.05
+  netPrice:            1169.05
+  chosen for cost:     1169.05
+  quantity:            45
+  inStock:             True
+  locations:
+      - Dallas Central: 45
+
+SKU: P1121=K3
+  listPrice:           122.99
+  netPrice:            122.99
+  chosen for cost:     122.99
+  quantity:            41
+  inStock:             True
+  locations:
+      - Dallas Central: 41
+
+--- Batch 6/8 -----------------------------
+SKU: WF337192=K3
+  listPrice:           470.6
+  netPrice:            417
+  chosen for cost:     470.6
+  quantity:            20
+  inStock:             True
+  locations:
+      - Dallas Central: 20
+
+SKU: P197783=K3
+  listPrice:           227.02
+  netPrice:            227.02
+  chosen for cost:     227.02
+  quantity:            74
+  inStock:             True
+  locations:
+      - Dallas Central: 29
+      - Germany CSC: 45
+
+SKU: P10-7210=K3
+  listPrice:           244.83
+  netPrice:            216.94
+  chosen for cost:     244.83
+  quantity:            33
+  inStock:             True
+  locations:
+      - Dallas Central: 19
+      - Anchorage, AK: 2
+      - Miami, FL: 12
+
+SKU: P13-6739=K3
+  listPrice:           404.03
+  netPrice:            358.01
+  chosen for cost:     404.03
+  quantity:            2
+  inStock:             True
+  locations:
+      - Dallas Central: 2
+
+SKU: 727734-1=9B
+  listPrice:           1650.35
+  netPrice:            1650.35
+  chosen for cost:     1650.35
+  quantity:            6
+  inStock:             True
+  locations:
+      - Dallas Central: 6
+
+SKU: FI0486=K3
+  listPrice:           38.88
+  netPrice:            38.88
+  chosen for cost:     38.88
+  quantity:            37
+  inStock:             True
+  locations:
+      - Dallas Central: 37
+
+SKU: 4066-0074-1=E4
+  listPrice:           1944.64
+  netPrice:            1944.64
+  chosen for cost:     1944.64
+  quantity:            58
+  inStock:             True
+  locations:
+      - Dallas Central: 58
+
+SKU: WF337424=K3
+  listPrice:           79.33
+  netPrice:            70.29
+  chosen for cost:     79.33
+  quantity:            0
+  inStock:             False
+  locations:
+      (none)
+
+SKU: 4177-0169-324=9B
+  listPrice:           0
+  netPrice:            58.1
+  chosen for cost:     58.1
+  quantity:            3
+  inStock:             True
+  locations:
+      - Dallas Central: 3
+
+SKU: WF335192=K3
+  listPrice:           406.34
+  netPrice:            360.06
+  chosen for cost:     406.34
+  quantity:            66
+  inStock:             True
+  locations:
+      - Dallas Central: 66
+
+--- Batch 7/8 -----------------------------
+SKU: 4177-0146-38=9B
+  listPrice:           0
+  netPrice:            257.65
+  chosen for cost:     257.65
+  quantity:            1
+  inStock:             True
+  locations:
+      - Goodyear AZ: 1
+
+SKU: 1400J8A1=9B
+  listPrice:           0
+  netPrice:            56.7
+  chosen for cost:     56.7
+  quantity:            1
+  inStock:             True
+  locations:
+      - Dallas Central: 1
+
+SKU: WF344855=K3
+  listPrice:           575.87
+  netPrice:            575.87
+  chosen for cost:     575.87
+  quantity:            11
+  inStock:             True
+  locations:
+      - Miami, FL: 11
+
+SKU: 2100002-01-231=E9
+  listPrice:           2677.28
+  netPrice:            2677.28
+  chosen for cost:     2677.28
+  quantity:            69
+  inStock:             True
+  locations:
+      - Dallas Central: 69
+
+SKU: WF338109=K3
+  listPrice:           155.39
+  netPrice:            137.69
+  chosen for cost:     155.39
+  quantity:            17
+  inStock:             True
+  locations:
+      - Dallas Central: 15
+      - Germany CSC: 2
+
+SKU: SAM222-19=E9
+  listPrice:           0
+  netPrice:            800
+  chosen for cost:     800.0
+  quantity:            36
+  inStock:             True
+  locations:
+      - Dallas Central: 36
+
+SKU: WF329398=K3
+  listPrice:           102.87
+  netPrice:            91.15
+  chosen for cost:     102.87
+  quantity:            8
+  inStock:             True
+  locations:
+      - Germany CSC: 8
+
+SKU: P198290=K3
+  listPrice:           171.73
+  netPrice:            152.17
+  chosen for cost:     171.73
+  quantity:            155
+  inStock:             True
+  locations:
+      - Dallas Central: 74
+      - Goodyear AZ: 66
+      - Chicago, IL: 15
+
+SKU: 0185-0016-1=9B
+  listPrice:           1861.95
+  netPrice:            1861.95
+  chosen for cost:     1861.95
+  quantity:            10
+  inStock:             True
+  locations:
+      - Dallas Central: 8
+      - Miami, FL: 2
+
+SKU: 2D1025-1=E9
+  listPrice:           338.51
+  netPrice:            338.51
+  chosen for cost:     338.51
+  quantity:            279
+  inStock:             True
+  locations:
+      - Dallas Central: 279
+
+--- Batch 8/8 -----------------------------
+SKU: S70030-1AMJ=E9
+  listPrice:           60.29
+  netPrice:            60.29
+  chosen for cost:     60.29
+  quantity:            116
+  inStock:             True
+  locations:
+      - Dallas Central: 116
+
+SKU: WF334786=K3
+  listPrice:           276.34
+  netPrice:            244.86
+  chosen for cost:     276.34
+  quantity:            4
+  inStock:             True
+  locations:
+      - Dallas Central: 4
+
+SKU: P642387=K3
+  listPrice:           957.13
+  netPrice:            957.13
+  chosen for cost:     957.13
+  quantity:            48
+  inStock:             True
+  locations:
+      - Dallas Central: 48
+
+SKU: P617649=K3
+  listPrice:           1745.97
+  netPrice:            1745.97
+  chosen for cost:     1745.97
+  quantity:            45
+  inStock:             True
+  locations:
+      - Dallas Central: 45
+
+SKU: P608440=K3
+  listPrice:           811.17
+  netPrice:            811.17
+  chosen for cost:     811.17
+  quantity:            0
+  inStock:             False
+  locations:
+      (none)
+
+SKU: P641425=K3
+  listPrice:           997.38
+  netPrice:            997.38
+  chosen for cost:     997.38
+  quantity:            32
+  inStock:             True
+  locations:
+      - Dallas Central: 32
+
+SKU: WF344862=K3
+  listPrice:           765.19
+  netPrice:            765.19
+  chosen for cost:     765.19
+  quantity:            17
+  inStock:             True
+  locations:
+      - Miami, FL: 9
+      - Chicago, IL: 8
+
+SKU: P1097=K3
+  listPrice:           103.99
+  netPrice:            103.99
+  chosen for cost:     103.99
+  quantity:            138
+  inStock:             True
+  locations:
+      - Dallas Central: 135
+      - Germany CSC: 3
+
+SKU: P510547=K3
+  listPrice:           132.15
+  netPrice:            132.15
+  chosen for cost:     132.15
+  quantity:            17
+  inStock:             True
+  locations:
+      - Germany CSC: 17
+
+======================================================================
+
+======================================================================
+  Report generated by scripts/backfill_shopify_cost.py
+======================================================================

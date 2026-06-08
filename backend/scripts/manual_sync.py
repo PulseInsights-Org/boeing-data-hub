@@ -372,10 +372,15 @@ class ShopifyAPI:
         self,
         shopify_product_id: str,
         price: Optional[float] = None,
+        cost: Optional[float] = None,
         quantity: Optional[int] = None,
         metafields: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Update product variant price, optional inventory, and metafields."""
+        """Update variant.price + inventory_item.cost + optional inventory + metafields.
+
+        cost goes to inventory_item.cost (Shopify Admin "Cost per item").
+        It is NOT the same as variant.price (the selling price).
+        """
         data = await self._call("GET", f"/products/{shopify_product_id}.json")
         variants = (data.get("product") or {}).get("variants") or []
         if not variants:
@@ -402,6 +407,18 @@ class ShopifyAPI:
         if quantity is not None and variant.get("inventory_item_id"):
             await self._set_inventory(
                 variant["inventory_item_id"], quantity
+            )
+
+        if cost is not None and variant.get("inventory_item_id"):
+            await self._call(
+                "PUT",
+                f"/inventory_items/{int(variant['inventory_item_id'])}.json",
+                json_data={
+                    "inventory_item": {
+                        "id": int(variant["inventory_item_id"]),
+                        "cost": float(cost),
+                    }
+                },
             )
 
         return result
@@ -1107,6 +1124,56 @@ def update_product_pricing(
         ).execute()
 
 
+def update_product_staging_pricing(
+    supabase,
+    sku: str,
+    user_id: str,
+    list_price: Optional[float] = None,
+    net_price: Optional[float] = None,
+    cost: Optional[float] = None,
+    price: Optional[float] = None,
+    inventory: Optional[int] = None,
+    inventory_status: Optional[str] = None,
+    location_summary: Optional[str] = None,
+) -> None:
+    """Align product_staging cost/price/qty with the live sync values.
+
+    Keeps the third table consistent with product_sync_schedule and product.
+    Silent no-op if the staging row was archived/deleted — logged at debug.
+    Never raises; staging drift must not break the main sync.
+    """
+    payload: Dict[str, Any] = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if list_price is not None:
+        payload["list_price"] = list_price
+    if net_price is not None:
+        payload["net_price"] = net_price
+    if cost is not None:
+        payload["cost_per_item"] = cost
+    if price is not None:
+        payload["price"] = price
+    if inventory is not None:
+        payload["inventory_quantity"] = inventory
+    if inventory_status is not None:
+        payload["inventory_status"] = inventory_status
+    if location_summary is not None:
+        payload["location_summary"] = location_summary
+
+    if len(payload) == 1:  # only updated_at — nothing to align
+        return
+
+    try:
+        supabase.table("product_staging").update(payload).eq("sku", sku).eq(
+            "user_id", user_id
+        ).execute()
+    except Exception as exc:
+        logger.warning(
+            f"product_staging alignment failed for {sku} "
+            f"(not blocking sync): {exc}"
+        )
+
+
 def get_stakeholder_recipients() -> List[str]:
     """Load stakeholder recipient list from STAKEHOLDER_RECIPIENTS env var.
 
@@ -1333,6 +1400,7 @@ async def run_sync(mode: str) -> None:
                     await shopify.update_product_pricing(
                         str(shopify_product_id),
                         price=shopify_price,
+                        cost=new_price,
                         metafields=metafields,
                     )
                     await shopify.update_inventory_by_location(
@@ -1345,6 +1413,7 @@ async def run_sync(mode: str) -> None:
                     await shopify.update_product_pricing(
                         str(shopify_product_id),
                         price=shopify_price,
+                        cost=new_price,
                         quantity=new_quantity,
                         metafields=metafields,
                     )
@@ -1408,6 +1477,19 @@ async def run_sync(mode: str) -> None:
                     shopify_price = round(new_price * MARKUP_FACTOR, 2) if new_price else None
                     update_product_pricing(
                         supabase, sku, user_id, shopify_price, new_price, new_quantity
+                    )
+
+                    # And align product_staging (third table) — same payload
+                    # so the staging row mirrors product and sync_schedule.
+                    update_product_staging_pricing(
+                        supabase, sku, user_id,
+                        list_price=boeing_data.get("list_price"),
+                        net_price=boeing_data.get("net_price"),
+                        cost=new_price,
+                        price=shopify_price,
+                        inventory=new_quantity,
+                        inventory_status=inventory_status,
+                        location_summary=boeing_data.get("location_summary"),
                     )
 
                     # Fix stale Shopify product ID if we resolved a new one
@@ -1486,6 +1568,7 @@ async def run_sync(mode: str) -> None:
                                 await retry_shopify.update_product_pricing(
                                     str(shopify_product_id),
                                     price=shopify_price,
+                                    cost=new_price,
                                     quantity=new_quantity,
                                 )
                                 await asyncio.sleep(SHOPIFY_DELAY_SECONDS)
@@ -1493,12 +1576,33 @@ async def run_sync(mode: str) -> None:
                         if is_production:
                             new_hash = compute_boeing_hash(product_data)
                             new_price = product_data.get("list_price") or product_data.get("net_price")
+                            new_quantity = product_data.get("inventory_quantity", 0)
+                            inventory_status = product_data.get("inventory_status")
                             update_sync_success(
                                 supabase, sku, new_hash, new_price,
-                                product_data.get("inventory_quantity", 0),
-                                product_data.get("inventory_status"),
+                                new_quantity,
+                                inventory_status,
                                 product_data.get("location_quantities"),
                             )
+                            # Align product + product_staging on retry path too
+                            product_rec = product_records.get(sku)
+                            if product_rec:
+                                user_id = product_rec.get("user_id", "system")
+                                shopify_price = round(new_price * MARKUP_FACTOR, 2) if new_price else None
+                                update_product_pricing(
+                                    supabase, sku, user_id,
+                                    shopify_price, new_price, new_quantity,
+                                )
+                                update_product_staging_pricing(
+                                    supabase, sku, user_id,
+                                    list_price=product_data.get("list_price"),
+                                    net_price=product_data.get("net_price"),
+                                    cost=new_price,
+                                    price=shopify_price,
+                                    inventory=new_quantity,
+                                    inventory_status=inventory_status,
+                                    location_summary=product_data.get("location_summary"),
+                                )
 
                         retried_ok += 1
                         if needs_update:

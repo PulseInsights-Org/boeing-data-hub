@@ -1,0 +1,391 @@
+======================================================================
+  SHOPIFY COST BACKFILL REPORT  --  WRITE
+  Jun 08, 2026 — 13:29 UTC
+======================================================================
+
+SUMMARY
+----------------------------------------
+  Total SKUs:           13
+  Updated:              5
+  Already Aligned:      6
+  Skipped:              2
+  Failed:               0
+  Missing from Boeing:  0
+  Boeing Batch Errors:  0
+  Duration:             3m 5s
+  Mode:                 WRITE
+
+UPDATED PRODUCTS (5)
+----------------------------------------------------------------------
+  SKU                             cost: before -> after                   
+  ----------------------------  --------------------------------------
+  0185-0016-1=9B                  1396.46 -> 1861.95  [sync=Y prod=Y stag=Y]
+  P198290=K3                      159.13 -> 171.73  [sync=Y prod=Y stag=Y]
+  WF329398=K3                     93.00 -> 102.87  [sync=Y prod=Y stag=Y]
+  WF338109=K3                     136.14 -> 155.39  [sync=Y prod=Y stag=Y]
+  WF344855=K3                     533.21 -> 575.87  [sync=Y prod=Y stag=Y]
+
+ALREADY ALIGNED (6)
+----------------------------------------------------------------------
+  SKU                             cost      
+  ----------------------------  ----------
+  1400J8A1=9B                     56.70
+  2100002-01-231=E9               2677.28
+  2D1025-1=E9                     338.51
+  4177-0146-38=9B                 257.65
+  42400-118=E9                    41.66
+  SAM222-19=E9                    800.00
+
+SKIPPED (2)
+----------------------------------------------------------------------
+  SKU                             Reason                                  
+  ----------------------------  --------------------------------------
+  4066-0074-1=E4                  GET product failed: Shopify API error (404): {"errors":"Not Found"}
+  727734-1=9B                     GET product failed: Shopify API error (404): {"errors":"Not Found"}
+
+======================================================================
+  BOEING RAW SNAPSHOT (audit appendix)
+  Jun 08, 2026 — 13:29 UTC
+  Total SKUs: 13   Batches: 2
+
+--- Batch 1/2 -----------------------------
+SKU: 4177-0146-38=9B
+  listPrice:           0
+  netPrice:            257.65
+  chosen for cost:     257.65
+  quantity:            1
+  inStock:             True
+  locations:
+      - Goodyear AZ: 1
+
+SKU: 1400J8A1=9B
+  listPrice:           0
+  netPrice:            56.7
+  chosen for cost:     56.7
+  quantity:            1
+  inStock:             True
+  locations:
+      - Dallas Central: 1
+
+SKU: WF344855=K3
+  listPrice:           575.87
+  netPrice:            575.87
+  chosen for cost:     575.87
+  quantity:            11
+  inStock:             True
+  locations:
+      - Miami, FL: 11
+
+SKU: 2100002-01-231=E9
+  listPrice:           2677.28
+  netPrice:            2677.28
+  chosen for cost:     2677.28
+  quantity:            69
+  inStock:             True
+  locations:
+      - Dallas Central: 69
+
+SKU: WF338109=K3
+  listPrice:           155.39
+  netPrice:            137.69
+  chosen for cost:     155.39
+  quantity:            17
+  inStock:             True
+  locations:
+      - Dallas Central: 15
+      - Germany CSC: 2
+
+SKU: SAM222-19=E9
+  listPrice:           0
+  netPrice:            800
+  chosen for cost:     800.0
+  quantity:            36
+  inStock:             True
+  locations:
+      - Dallas Central: 36
+
+SKU: WF329398=K3
+  listPrice:           102.87
+  netPrice:            91.15
+  chosen for cost:     102.87
+  quantity:            8
+  inStock:             True
+  locations:
+      - Germany CSC: 8
+
+SKU: P198290=K3
+  listPrice:           171.73
+  netPrice:            152.17
+  chosen for cost:     171.73
+  quantity:            155
+  inStock:             True
+  locations:
+      - Dallas Central: 74
+      - Goodyear AZ: 66
+      - Chicago, IL: 15
+
+SKU: 0185-0016-1=9B
+  listPrice:           1861.95
+  netPrice:            1861.95
+  chosen for cost:     1861.95
+  quantity:            10
+  inStock:             True
+  locations:
+      - Dallas Central: 8
+      - Miami, FL: 2
+
+SKU: 2D1025-1=E9
+  listPrice:           338.51
+  netPrice:            338.51
+  chosen for cost:     338.51
+  quantity:            279
+  inStock:             True
+  locations:
+      - Dallas Central: 279
+
+--- Batch 2/2 -----------------------------
+SKU: 42400-118=E9
+  listPrice:           0
+  netPrice:            41.66
+  chosen for cost:     41.66
+  quantity:            6
+  inStock:             True
+  locations:
+      - Dallas Central: 6
+
+SKU: 4066-0074-1=E4
+  listPrice:           1944.64
+  netPrice:            1944.64
+  chosen for cost:     1944.64
+  quantity:            58
+  inStock:             True
+  locations:
+      - Dallas Central: 58
+
+SKU: 727734-1=9B
+  listPrice:           1650.35
+  netPrice:            1650.35
+  chosen for cost:     1650.35
+  quantity:            6
+  inStock:             True
+  locations:
+      - Dallas Central: 6
+
+======================================================================
+
+JSON DETAIL (per-SKU)
+----------------------------------------------------------------------
+[
+  {
+    "sku": "4177-0146-38=9B",
+    "boeing_list_price": 0,
+    "boeing_net_price": 257.65,
+    "boeing_quantity": 1,
+    "cost_pushed": 257.65,
+    "shopify_cost_before": "257.65",
+    "shopify_status": "already_aligned",
+    "shopify_product_id": "8202969612342",
+    "inventory_item_id": 46232762056758,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "1400J8A1=9B",
+    "boeing_list_price": 0,
+    "boeing_net_price": 56.7,
+    "boeing_quantity": 1,
+    "cost_pushed": 56.7,
+    "shopify_cost_before": "56.70",
+    "shopify_status": "already_aligned",
+    "shopify_product_id": "8202962468918",
+    "inventory_item_id": 46232746983478,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "WF344855=K3",
+    "boeing_list_price": 575.87,
+    "boeing_net_price": 575.87,
+    "boeing_quantity": 11,
+    "cost_pushed": 575.87,
+    "shopify_cost_before": "533.21",
+    "shopify_status": "ok",
+    "shopify_product_id": "8202976559158",
+    "inventory_item_id": 46232770838582,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "2100002-01-231=E9",
+    "boeing_list_price": 2677.28,
+    "boeing_net_price": 2677.28,
+    "boeing_quantity": 69,
+    "cost_pushed": 2677.28,
+    "shopify_cost_before": "2677.28",
+    "shopify_status": "already_aligned",
+    "shopify_product_id": "7783214415926",
+    "inventory_item_id": 44933481627702,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "WF338109=K3",
+    "boeing_list_price": 155.39,
+    "boeing_net_price": 137.69,
+    "boeing_quantity": 17,
+    "cost_pushed": 155.39,
+    "shopify_cost_before": "136.14",
+    "shopify_status": "ok",
+    "shopify_product_id": "8202980458550",
+    "inventory_item_id": 46232775688246,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "SAM222-19=E9",
+    "boeing_list_price": 0,
+    "boeing_net_price": 800,
+    "boeing_quantity": 36,
+    "cost_pushed": 800.0,
+    "shopify_cost_before": "800.00",
+    "shopify_status": "already_aligned",
+    "shopify_product_id": "8202964631606",
+    "inventory_item_id": 46232749473846,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "WF329398=K3",
+    "boeing_list_price": 102.87,
+    "boeing_net_price": 91.15,
+    "boeing_quantity": 8,
+    "cost_pushed": 102.87,
+    "shopify_cost_before": "93.00",
+    "shopify_status": "ok",
+    "shopify_product_id": "8202970497078",
+    "inventory_item_id": 46232762974262,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "P198290=K3",
+    "boeing_list_price": 171.73,
+    "boeing_net_price": 152.17,
+    "boeing_quantity": 155,
+    "cost_pushed": 171.73,
+    "shopify_cost_before": "159.13",
+    "shopify_status": "ok",
+    "shopify_product_id": "8202973773878",
+    "inventory_item_id": 46232767823926,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "0185-0016-1=9B",
+    "boeing_list_price": 1861.95,
+    "boeing_net_price": 1861.95,
+    "boeing_quantity": 10,
+    "cost_pushed": 1861.95,
+    "shopify_cost_before": "1396.46",
+    "shopify_status": "ok",
+    "shopify_product_id": "8202961879094",
+    "inventory_item_id": 46232746229814,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "2D1025-1=E9",
+    "boeing_list_price": 338.51,
+    "boeing_net_price": 338.51,
+    "boeing_quantity": 279,
+    "cost_pushed": 338.51,
+    "shopify_cost_before": "338.51",
+    "shopify_status": "already_aligned",
+    "shopify_product_id": "8202962239542",
+    "inventory_item_id": 46232746786870,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "42400-118=E9",
+    "boeing_list_price": 0,
+    "boeing_net_price": 41.66,
+    "boeing_quantity": 6,
+    "cost_pushed": 41.66,
+    "shopify_cost_before": "41.66",
+    "shopify_status": "already_aligned",
+    "shopify_product_id": "8202969055286",
+    "inventory_item_id": 46232760614966,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "db_product_staging": true,
+    "error": null,
+    "attempt": 1
+  },
+  {
+    "sku": "4066-0074-1=E4",
+    "boeing_list_price": 1944.64,
+    "boeing_net_price": 1944.64,
+    "boeing_quantity": 58,
+    "cost_pushed": 1944.64,
+    "shopify_cost_before": null,
+    "shopify_status": "skipped",
+    "shopify_product_id": "8181194850358",
+    "inventory_item_id": null,
+    "db_sync_schedule": false,
+    "db_product": false,
+    "db_product_staging": false,
+    "error": "GET product failed: Shopify API error (404): {\"errors\":\"Not Found\"}",
+    "attempt": 1
+  },
+  {
+    "sku": "727734-1=9B",
+    "boeing_list_price": 1650.35,
+    "boeing_net_price": 1650.35,
+    "boeing_quantity": 6,
+    "cost_pushed": 1650.35,
+    "shopify_cost_before": null,
+    "shopify_status": "skipped",
+    "shopify_product_id": "8181196226614",
+    "inventory_item_id": null,
+    "db_sync_schedule": false,
+    "db_product": false,
+    "db_product_staging": false,
+    "error": "GET product failed: Shopify API error (404): {\"errors\":\"Not Found\"}",
+    "attempt": 1
+  }
+]
+
+======================================================================
+  Report generated by scripts/backfill_shopify_cost.py
+======================================================================

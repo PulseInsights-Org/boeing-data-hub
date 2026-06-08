@@ -346,3 +346,68 @@ class StagingStore(BaseStore):
                 status_code=500,
                 detail=f"Supabase update product_staging failed: {e}",
             )
+
+    async def update_product_staging_pricing(
+        self,
+        sku: str,
+        user_id: str,
+        list_price: float | None = None,
+        net_price: float | None = None,
+        cost: float | None = None,
+        price: float | None = None,
+        inventory: int | None = None,
+        inventory_status: str | None = None,
+        location_summary: str | None = None,
+    ) -> None:
+        """Mirror live Boeing pricing/inventory into the product_staging row.
+
+        Keeps the three tables (product_sync_schedule, product, product_staging)
+        consistent on every sync cycle. No-op if the staging row has been
+        archived/deleted — logged at info level, never raises in that case.
+        """
+        from datetime import datetime, timezone
+
+        payload: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+        if list_price is not None:
+            payload["list_price"] = list_price
+        if net_price is not None:
+            payload["net_price"] = net_price
+        if cost is not None:
+            payload["cost_per_item"] = cost
+        if price is not None:
+            payload["price"] = price
+        if inventory is not None:
+            payload["inventory_quantity"] = inventory
+        if inventory_status is not None:
+            payload["inventory_status"] = inventory_status
+        if location_summary is not None:
+            payload["location_summary"] = location_summary
+
+        if len(payload) == 1:  # only updated_at — nothing to align
+            return
+
+        try:
+            response = (
+                self._client.table("product_staging")
+                .update(payload)
+                .eq("user_id", user_id)
+                .eq("sku", sku)
+                .execute()
+            )
+            if response.data:
+                logger.info(
+                    f"Updated product_staging pricing for {sku}: keys={list(payload.keys())}"
+                )
+            else:
+                logger.info(
+                    f"product_staging: no row for {sku} (user_id={user_id}) — "
+                    f"skipped pricing update"
+                )
+        except APIError as e:
+            logger.error(
+                f"Failed to update product_staging pricing for {sku}: {e}"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Supabase update product_staging pricing failed: {e}",
+            )

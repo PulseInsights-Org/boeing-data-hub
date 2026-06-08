@@ -1,0 +1,56 @@
+Mode: WRITE
+SKUs: 1
+
+======================================================================
+  BOEING SNAPSHOT (source of truth for backfill)
+  Jun 08, 2026 — 12:15 UTC
+  Total SKUs: 1   Batches: 1
+======================================================================
+
+--- Batch 1/1 -----------------------------
+SKU: 2D2019-5=E9
+  listPrice:           505.13
+  netPrice:            505.13
+  chosen for cost:     505.13
+  quantity:            167
+  inStock:             True
+  locations:
+      - Dallas Central: 167
+
+
+======================================================================
+  BACKFILL RESULTS
+======================================================================
+  Duration:               0m 31s
+  Shopify cost pushed:    1
+  Already aligned:        0
+  Skipped (no Shopify):   0
+  Failed after retry:     0
+  Boeing-missing SKUs:    0
+  Boeing batch errors:    0
+
+--- Per-SKU detail -----------------------------------------
+2D2019-5=E9                      cost 488.65 -> 505.13  shopify=ok  db_sync=True db_product=True  attempt=1
+
+--- JSON (per-SKU) -----------------------------------------
+[
+  {
+    "sku": "2D2019-5=E9",
+    "boeing_list_price": 505.13,
+    "boeing_net_price": 505.13,
+    "cost_pushed": 505.13,
+    "shopify_cost_before": "488.65",
+    "shopify_status": "ok",
+    "shopify_product_id": "8202983866422",
+    "inventory_item_id": 46232779522102,
+    "db_sync_schedule": true,
+    "db_product": true,
+    "error": null,
+    "attempt": 1
+  }
+]
+
+======================================================================
+  Duration: 0m 31s
+  Output:   C:\Users\91948\Desktop\SkynetParts - Projects\boeing-data-hub\backend\scripts\reports\backfill_shopify_cost_WRITE_2026-06-08_174440.txt
+======================================================================

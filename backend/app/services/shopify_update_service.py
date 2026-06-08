@@ -12,6 +12,7 @@ from app.core.constants.pricing import MARKUP_FACTOR
 from app.core.exceptions import RetryableError, NonRetryableError
 from app.db.sync_store import SyncStore
 from app.db.product_store import ProductStore
+from app.db.staging_store import StagingStore
 from app.services.shopify_orchestrator import ShopifyOrchestrator
 from app.utils.hash_utils import compute_boeing_hash
 
@@ -24,10 +25,12 @@ class ShopifyUpdateService:
         shopify: ShopifyOrchestrator,
         sync_store: SyncStore,
         product_store: ProductStore,
+        staging_store: StagingStore,
     ) -> None:
         self._shopify = shopify
         self._sync = sync_store
         self._products = product_store
+        self._staging = staging_store
 
     async def update_product(
         self,
@@ -83,10 +86,13 @@ class ShopifyUpdateService:
                 "type": "single_line_text_field",
             }]
 
-        # Update Shopify
+        # Update Shopify (variant.price + inventory_item.cost in one call)
         if location_quantities and not is_out_of_stock:
             await self._shopify.update_product_pricing(
-                shopify_product_id, price=shopify_price, metafields=metafields
+                shopify_product_id,
+                price=shopify_price,
+                cost=new_price,
+                metafields=metafields,
             )
             await self._shopify.update_inventory_by_location(
                 shopify_product_id, location_quantities
@@ -95,6 +101,7 @@ class ShopifyUpdateService:
             await self._shopify.update_product_pricing(
                 shopify_product_id,
                 price=shopify_price,
+                cost=new_price,
                 quantity=new_quantity,
                 metafields=metafields,
             )
@@ -120,6 +127,29 @@ class ShopifyUpdateService:
             sku, user_id,
             price=shopify_price, cost=new_price, inventory=new_quantity,
         )
+
+        # Align product_staging (third table) — same fields as product +
+        # raw list/net price and location_summary so staging stays a live
+        # mirror, not a stale snapshot.
+        try:
+            await self._staging.update_product_staging_pricing(
+                sku=sku,
+                user_id=user_id,
+                list_price=boeing_data.get("list_price"),
+                net_price=boeing_data.get("net_price"),
+                cost=new_price,
+                price=shopify_price,
+                inventory=new_quantity,
+                inventory_status=inventory_status,
+                location_summary=location_summary,
+            )
+        except Exception as staging_err:
+            # Don't fail the whole sync if staging drift can't be fixed —
+            # Shopify and product (canonical) are already updated above.
+            logger.error(
+                f"product_staging alignment failed for {sku} "
+                f"(Shopify+product updated OK): {staging_err}"
+            )
 
         logger.info(
             f"Shopify updated for {sku}: price=${shopify_price}, "

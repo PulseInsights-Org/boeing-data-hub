@@ -147,10 +147,15 @@ class ShopifyOrchestrator:
         self,
         shopify_product_id: str | int,
         price: float | None = None,
+        cost: float | None = None,
         quantity: int | None = None,
         metafields: list[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
-        """Update product pricing, optional inventory, and metafields."""
+        """Update product pricing, optional inventory, cost, and metafields.
+
+        cost is written to inventory_item.cost (Shopify Admin "Cost per item").
+        It is NOT the same as variant.price (the selling price).
+        """
         data = await self._client.call_shopify("GET", f"/products/{shopify_product_id}.json")
         variants = (data.get("product") or {}).get("variants") or []
         if not variants:
@@ -170,6 +175,10 @@ class ShopifyOrchestrator:
         if quantity is not None and variant.get("inventory_item_id"):
             await self.update_inventory(
                 shopify_product_id, quantity, variant["inventory_item_id"]
+            )
+        if cost is not None and variant.get("inventory_item_id"):
+            await self._inventory.set_inventory_cost(
+                int(variant["inventory_item_id"]), cost
             )
         return result
 
